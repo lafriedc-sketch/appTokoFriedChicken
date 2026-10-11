@@ -18,11 +18,12 @@ import {
   CheckCircle2
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
-import { Product, ProductAddon, CartItem, StoreSettings, Transaction } from "@/types";
+import { Product, ProductAddon, CartItem, StoreSettings, Transaction, CashierSession } from "@/types";
 import { formatRupiah, generateReceiptNo } from "@/lib/utils";
 import InitialDrawerModal from "@/components/InitialDrawerModal";
 import CelebrationModal from "@/components/CelebrationModal";
 import ReceiptModal from "@/components/ReceiptModal";
+import CashierLoginModal from "@/components/CashierLoginModal";
 
 // Fallback seed products if table not yet populated
 const DEFAULT_PRODUCTS: Product[] = [
@@ -49,6 +50,10 @@ export default function POSPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
   
+  // Cashier Session
+  const [cashierSession, setCashierSession] = useState<CashierSession | null>(null);
+  const [isCashierModalOpen, setIsCashierModalOpen] = useState(false);
+
   // Drawer Check
   const [isDrawerOpenModal, setIsDrawerOpenModal] = useState(false);
   const [hasCheckedDrawer, setHasCheckedDrawer] = useState(false);
@@ -72,6 +77,20 @@ export default function POSPage() {
   // Fetch initial data
   const fetchData = async () => {
     try {
+      // 0. Check Cashier Session
+      if (typeof window !== "undefined") {
+        const storedCashier = localStorage.getItem("la_active_cashier");
+        if (storedCashier) {
+          try {
+            setCashierSession(JSON.parse(storedCashier));
+          } catch {
+            setIsCashierModalOpen(true);
+          }
+        } else {
+          setIsCashierModalOpen(true);
+        }
+      }
+
       // 1. Check Drawer
       const { data: drawerData } = await supabase
         .from("cash_drawers")
@@ -349,9 +368,19 @@ export default function POSPage() {
 
   return (
     <div className="pb-8">
+      {/* Cashier Login Modal */}
+      <CashierLoginModal
+        isOpen={isCashierModalOpen}
+        validPin={settings?.admin_pin || "1234"}
+        onSuccess={(session) => {
+          setCashierSession(session);
+          setIsCashierModalOpen(false);
+        }}
+      />
+
       {/* Drawer Requirement Modal */}
       <InitialDrawerModal
-        isOpen={isDrawerOpenModal}
+        isOpen={!isCashierModalOpen && isDrawerOpenModal}
         onSuccess={() => setIsDrawerOpenModal(false)}
       />
 
@@ -371,6 +400,7 @@ export default function POSPage() {
         isOpen={showReceipt}
         transaction={lastTransaction}
         settings={settings}
+        cashierName={cashierSession?.name}
         onClose={() => setShowReceipt(false)}
       />
 

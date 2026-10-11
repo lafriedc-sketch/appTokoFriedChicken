@@ -19,6 +19,33 @@ import { CashDrawer } from "@/types";
 export default function Navbar() {
   const pathname = usePathname();
   const [activeDrawer, setActiveDrawer] = useState<CashDrawer | null>(null);
+  const [cashierName, setCashierName] = useState<string | null>(null);
+
+  useEffect(() => {
+    function checkSession() {
+      if (typeof window !== "undefined") {
+        const localCashier = localStorage.getItem("la_active_cashier");
+        if (localCashier) {
+          try {
+            setCashierName(JSON.parse(localCashier).name);
+          } catch {
+            setCashierName(null);
+          }
+        } else {
+          setCashierName(null);
+        }
+      }
+    }
+    checkSession();
+  }, [pathname]);
+
+  const handleCashierLogout = () => {
+    if (confirm(`Keluar dari shift ${cashierName || "kasir"}?`)) {
+      localStorage.removeItem("la_active_cashier");
+      setCashierName(null);
+      window.location.reload();
+    }
+  };
 
   useEffect(() => {
     async function checkDrawer() {
@@ -81,7 +108,21 @@ export default function Navbar() {
           </Link>
 
           {/* Status & Desktop Nav */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Active Cashier Badge */}
+            {cashierName && (
+              <button
+                type="button"
+                onClick={handleCashierLogout}
+                title="Klik untuk ganti kasir / keluar shift"
+                className="text-xs font-bold px-3 py-1.5 rounded-full flex items-center gap-1.5 bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition-all shadow-sm"
+              >
+                <span>👤</span>
+                <span className="max-w-[80px] sm:max-w-none truncate">{cashierName}</span>
+                <span className="text-[10px] text-rose-400">✕</span>
+              </button>
+            )}
+
             {/* Drawer Status Pill */}
             <Link
               href="/drawer"

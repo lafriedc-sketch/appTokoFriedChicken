@@ -103,3 +103,9 @@ export interface CartItem {
   selectedAddons?: CartAddon[];
   note?: string;
 }
+
+export interface CashierSession {
+  name: string;
+  loggedInAt: string;
+}
+

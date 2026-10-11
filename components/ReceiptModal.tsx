@@ -9,6 +9,7 @@ interface ReceiptModalProps {
   isOpen: boolean;
   transaction: Transaction | null;
   settings: StoreSettings | null;
+  cashierName?: string | null;
   onClose: () => void;
 }
 
@@ -16,6 +17,7 @@ export default function ReceiptModal({
   isOpen,
   transaction,
   settings,
+  cashierName,
   onClose,
 }: ReceiptModalProps) {
   const [copied, setCopied] = useState(false);
@@ -46,6 +48,7 @@ export default function ReceiptModal({
       `Telp/WA: ${storePhone}\n` +
       `--------------------------------\n` +
       `Nota: ${transaction.receipt_no}\n` +
+      `Kasir: ${cashierName || "Kasir"}\n` +
       `Waktu: ${formatDateIndo(transaction.created_at || new Date().toISOString())}\n` +
       `--------------------------------\n` +
       `${itemsText}\n` +
@@ -108,6 +111,10 @@ export default function ReceiptModal({
               <div className="flex justify-between">
                 <span>No. Nota:</span>
                 <span className="font-bold text-gray-800">{transaction.receipt_no}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Kasir:</span>
+                <span className="font-semibold text-gray-800">{cashierName || "Kasir"}</span>
               </div>
               <div className="flex justify-between">
                 <span>Waktu:</span>
