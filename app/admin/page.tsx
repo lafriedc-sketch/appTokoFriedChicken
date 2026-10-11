@@ -1,0 +1,1097 @@
+"use client";
+
+import React, { useEffect, useState } from "react";
+import { 
+  Lock, 
+  Unlock, 
+  Store, 
+  ShoppingBag, 
+  Plus, 
+  Trash2, 
+  Edit3, 
+  Save, 
+  Check, 
+  QrCode, 
+  Boxes, 
+  Layers, 
+  AlertCircle,
+  Sparkles,
+  KeyRound
+} from "lucide-react";
+import { supabase } from "@/lib/supabaseClient";
+import { Product, ProductAddon, InventoryItem, StoreSettings } from "@/types";
+import { formatRupiah } from "@/lib/utils";
+
+export default function AdminPage() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [pinInput, setPinInput] = useState("");
+  const [pinError, setPinError] = useState("");
+  
+  // Active Tab: 'profile' | 'products' | 'addons' | 'inventory' | 'qris'
+  const [activeTab, setActiveTab] = useState<"profile" | "products" | "addons" | "inventory" | "qris">("profile");
+
+  // State Data
+  const [settings, setSettings] = useState<StoreSettings>({
+    store_name: "LA Fried Chicken",
+    address: "Jl. Melati Rasa No. 88, Kios Sentra Kuliner",
+    whatsapp_number: "081234567890",
+    receipt_footer: "Terima kasih telah berbelanja di LA Fried Chicken! Renyah, Gurih & Selalu Fresh 🍗🌸",
+    qris_mode: "static",
+    qris_static_image_url: "",
+    admin_pin: "1234",
+  });
+  const [newPin, setNewPin] = useState("");
+  const [products, setProducts] = useState<Product[]>([]);
+  const [addons, setAddons] = useState<ProductAddon[]>([]);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+
+  // Form states
+  // Product Form
+  const [productForm, setProductForm] = useState({
+    id: "",
+    name: "",
+    category: "Ayam",
+    price: 0,
+    is_available: true,
+    icon_or_image_url: "🍗",
+  });
+  const [isEditingProduct, setIsEditingProduct] = useState(false);
+
+  // Addon Form
+  const [addonForm, setAddonForm] = useState({
+    id: "",
+    name: "",
+    price: 0,
+  });
+  const [isEditingAddon, setIsEditingAddon] = useState(false);
+
+  // Inventory Item Form
+  const [inventoryForm, setInventoryForm] = useState({
+    id: "",
+    name: "",
+    unit: "potong",
+    min_stock: 10,
+    current_stock: 50,
+  });
+  const [isEditingInventory, setIsEditingInventory] = useState(false);
+
+  // Feedback notifications
+  const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  const showNotification = (text: string, type: "success" | "error" = "success") => {
+    setNotice({ type, text });
+    setTimeout(() => setNotice(null), 3000);
+  };
+
+  // Fetch all Admin Data
+  const fetchAllData = async () => {
+    try {
+      // 1. Settings
+      const { data: sData } = await supabase
+        .from("store_settings")
+        .select("*")
+        .limit(1)
+        .maybeSingle();
+
+      if (sData) {
+        setSettings(sData);
+      }
+
+      // 2. Products
+      const { data: pData } = await supabase
+        .from("products")
+        .select("*")
+        .order("created_at", { ascending: true });
+      if (pData) setProducts(pData);
+
+      // 3. Addons
+      const { data: aData } = await supabase
+        .from("product_addons")
+        .select("*")
+        .order("created_at", { ascending: true });
+      if (aData) setAddons(aData);
+
+      // 4. Inventory Items
+      const { data: iData } = await supabase
+        .from("inventory_items")
+        .select("*")
+        .order("name", { ascending: true });
+      if (iData) setInventoryItems(iData);
+    } catch (err) {
+      console.error("Gagal load admin data:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchAllData();
+  }, []);
+
+  // Handle PIN Unlock
+  const handleVerifyPin = () => {
+    const validPin = settings.admin_pin || "1234";
+    if (pinInput === validPin) {
+      setIsAuthenticated(true);
+      setPinError("");
+    } else {
+      setPinError("PIN salah! Masukkan PIN yang benar (default: 1234)");
+    }
+  };
+
+  // 1. UPDATE SETTINGS / PROFIL
+  const handleSaveSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const payload: Partial<StoreSettings> = {
+        store_name: settings.store_name,
+        address: settings.address,
+        whatsapp_number: settings.whatsapp_number,
+        receipt_footer: settings.receipt_footer,
+        qris_mode: settings.qris_mode,
+        qris_static_image_url: settings.qris_static_image_url,
+      };
+
+      if (newPin.trim()) {
+        payload.admin_pin = newPin.trim();
+      }
+
+      const { error } = await supabase
+        .from("store_settings")
+        .upsert({
+          id: settings.id || "00000000-0000-0000-0000-000000000001",
+          ...payload,
+          updated_at: new Date().toISOString(),
+        });
+
+      if (error) throw error;
+      showNotification("Pengaturan profil berhasil disimpan! 🌸");
+      setNewPin("");
+      fetchAllData();
+    } catch (err: any) {
+      showNotification(err.message || "Gagal menyimpan pengaturan", "error");
+    }
+  };
+
+  // 2. PRODUCT CRUD
+  const handleSaveProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!productForm.name.trim()) return;
+
+    try {
+      if (isEditingProduct && productForm.id) {
+        const { error } = await supabase
+          .from("products")
+          .update({
+            name: productForm.name,
+            category: productForm.category,
+            price: Number(productForm.price),
+            is_available: productForm.is_available,
+            icon_or_image_url: productForm.icon_or_image_url,
+          })
+          .eq("id", productForm.id);
+
+        if (error) throw error;
+        showNotification("Menu berhasil diperbarui!");
+      } else {
+        const { error } = await supabase.from("products").insert({
+          name: productForm.name,
+          category: productForm.category,
+          price: Number(productForm.price),
+          is_available: productForm.is_available,
+          icon_or_image_url: productForm.icon_or_image_url,
+        });
+
+        if (error) throw error;
+        showNotification("Menu baru berhasil ditambahkan! 🍗");
+      }
+
+      setProductForm({
+        id: "",
+        name: "",
+        category: "Ayam",
+        price: 0,
+        is_available: true,
+        icon_or_image_url: "🍗",
+      });
+      setIsEditingProduct(false);
+      fetchAllData();
+    } catch (err: any) {
+      showNotification(err.message || "Gagal menyimpan menu", "error");
+    }
+  };
+
+  const handleToggleProductAvailability = async (product: Product) => {
+    try {
+      const { error } = await supabase
+        .from("products")
+        .update({ is_available: !product.is_available })
+        .eq("id", product.id);
+
+      if (error) throw error;
+      setProducts((prev) =>
+        prev.map((p) =>
+          p.id === product.id ? { ...p, is_available: !p.is_available } : p
+        )
+      );
+    } catch (err: any) {
+      showNotification(err.message || "Gagal mengubah status", "error");
+    }
+  };
+
+  const handleDeleteProduct = async (id: string) => {
+    if (!confirm("Yakin ingin menghapus menu ini dari katalog?")) return;
+    try {
+      const { error } = await supabase.from("products").delete().eq("id", id);
+      if (error) throw error;
+      showNotification("Menu berhasil dihapus.");
+      fetchAllData();
+    } catch (err: any) {
+      showNotification(err.message || "Gagal menghapus", "error");
+    }
+  };
+
+  // 3. ADDON CRUD
+  const handleSaveAddon = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!addonForm.name.trim()) return;
+
+    try {
+      if (isEditingAddon && addonForm.id) {
+        const { error } = await supabase
+          .from("product_addons")
+          .update({
+            name: addonForm.name,
+            price: Number(addonForm.price),
+          })
+          .eq("id", addonForm.id);
+
+        if (error) throw error;
+        showNotification("Varian saus diperbarui!");
+      } else {
+        const { error } = await supabase.from("product_addons").insert({
+          name: addonForm.name,
+          price: Number(addonForm.price),
+        });
+
+        if (error) throw error;
+        showNotification("Varian saus baru ditambahkan!");
+      }
+
+      setAddonForm({ id: "", name: "", price: 0 });
+      setIsEditingAddon(false);
+      fetchAllData();
+    } catch (err: any) {
+      showNotification(err.message || "Gagal menyimpan varian", "error");
+    }
+  };
+
+  const handleDeleteAddon = async (id: string) => {
+    if (!confirm("Hapus saus ini?")) return;
+    try {
+      const { error } = await supabase.from("product_addons").delete().eq("id", id);
+      if (error) throw error;
+      showNotification("Saus dihapus.");
+      fetchAllData();
+    } catch (err: any) {
+      showNotification(err.message || "Gagal menghapus", "error");
+    }
+  };
+
+  // 4. INVENTORY MASTER CRUD
+  const handleSaveInventory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inventoryForm.name.trim()) return;
+
+    try {
+      if (isEditingInventory && inventoryForm.id) {
+        const { error } = await supabase
+          .from("inventory_items")
+          .update({
+            name: inventoryForm.name,
+            unit: inventoryForm.unit,
+            min_stock: Number(inventoryForm.min_stock),
+            current_stock: Number(inventoryForm.current_stock),
+          })
+          .eq("id", inventoryForm.id);
+
+        if (error) throw error;
+        showNotification("Master bahan baku diperbarui!");
+      } else {
+        const { error } = await supabase.from("inventory_items").insert({
+          name: inventoryForm.name,
+          unit: inventoryForm.unit,
+          min_stock: Number(inventoryForm.min_stock),
+          current_stock: Number(inventoryForm.current_stock),
+        });
+
+        if (error) throw error;
+        showNotification("Bahan baku baru berhasil didaftarkan!");
+      }
+
+      setInventoryForm({
+        id: "",
+        name: "",
+        unit: "potong",
+        min_stock: 10,
+        current_stock: 50,
+      });
+      setIsEditingInventory(false);
+      fetchAllData();
+    } catch (err: any) {
+      showNotification(err.message || "Gagal menyimpan bahan", "error");
+    }
+  };
+
+  const handleDeleteInventory = async (id: string) => {
+    if (!confirm("Hapus master bahan baku ini?")) return;
+    try {
+      const { error } = await supabase.from("inventory_items").delete().eq("id", id);
+      if (error) throw error;
+      showNotification("Bahan baku dihapus.");
+      fetchAllData();
+    } catch (err: any) {
+      showNotification(err.message || "Gagal menghapus", "error");
+    }
+  };
+
+  // SCREEN: PIN PROTECTION LOCK
+  if (!isAuthenticated) {
+    return (
+      <div className="max-w-md mx-auto mt-10 p-6 bg-white rounded-3xl border border-pink-100 shadow-xl text-center">
+        <div className="w-16 h-16 mx-auto rounded-3xl bg-gradient-to-tr from-rose-500 to-pink-400 flex items-center justify-center text-white shadow-lg shadow-rose-200 mb-4 animate-bounce">
+          <Lock className="w-8 h-8" />
+        </div>
+        <h2 className="text-xl font-black text-gray-800 mb-1">Keamanan Admin Kios</h2>
+        <p className="text-xs text-gray-500 mb-6">
+          Masukkan PIN keamanan untuk mengakses pengaturan harga, menu, & toko (Default: 1234).
+        </p>
+
+        <div className="space-y-3">
+          <input
+            type="password"
+            maxLength={6}
+            placeholder="Ketik PIN..."
+            value={pinInput}
+            onChange={(e) => setPinInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleVerifyPin()}
+            className="w-full text-center text-2xl font-black tracking-widest py-3 bg-pink-50/50 border border-pink-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-rose-400"
+          />
+
+          {pinError && (
+            <div className="p-2.5 bg-red-50 text-red-600 rounded-xl text-xs font-semibold border border-red-200 flex items-center justify-center gap-1.5">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span>{pinError}</span>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={handleVerifyPin}
+            className="w-full py-3.5 bg-rose-500 text-white font-bold text-sm rounded-2xl shadow-md shadow-rose-200 hover:bg-rose-600 active:scale-95 transition-all flex items-center justify-center gap-2 btn-bounce min-h-[48px]"
+          >
+            <Unlock className="w-4 h-4" />
+            <span>Buka Akses Admin</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5 pb-10">
+      {/* Toast Notice */}
+      {notice && (
+        <div
+          className={`fixed top-4 right-4 z-50 p-4 rounded-2xl shadow-xl text-xs font-bold border flex items-center gap-2 animate-pop-in ${
+            notice.type === "success"
+              ? "bg-emerald-500 text-white border-emerald-400"
+              : "bg-red-500 text-white border-red-400"
+          }`}
+        >
+          <span>{notice.text}</span>
+        </div>
+      )}
+
+      {/* Header Admin */}
+      <div className="bg-white rounded-3xl p-5 shadow-sm border border-pink-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-black text-gray-800">
+              Panel Pengaturan & Master Data
+            </h1>
+            <span className="text-lg">⚙️🌸</span>
+          </div>
+          <p className="text-xs text-gray-500">
+            Kelola profil LA Fried Chicken, katalog menu, saus, bahan baku, dan konfigurasi QRIS.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setIsAuthenticated(false)}
+          className="self-start sm:self-center px-4 py-2 bg-pink-50 hover:bg-pink-100 text-rose-600 font-bold text-xs rounded-2xl border border-pink-200 flex items-center gap-1.5 transition-all btn-bounce"
+        >
+          <Lock className="w-3.5 h-3.5" />
+          <span>Kunci Admin</span>
+        </button>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+        {[
+          { key: "profile", label: "Profil Toko", icon: Store },
+          { key: "products", label: "Menu & Produk", icon: ShoppingBag },
+          { key: "addons", label: "Varian Saus", icon: Layers },
+          { key: "inventory", label: "Master Bahan", icon: Boxes },
+          { key: "qris", label: "Mode QRIS", icon: QrCode },
+        ].map((tab) => {
+          const Icon = tab.icon;
+          const isActive = activeTab === tab.key;
+          return (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key as any)}
+              className={`flex items-center gap-1.5 px-4 py-2.5 rounded-2xl text-xs font-bold whitespace-nowrap transition-all btn-bounce ${
+                isActive
+                  ? "bg-rose-500 text-white shadow-md shadow-rose-200"
+                  : "bg-white text-gray-700 border border-pink-100 hover:bg-pink-50/50"
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* TAB 1: PROFIL TOKO & PIN */}
+      {activeTab === "profile" && (
+        <div className="bg-white rounded-3xl p-6 shadow-sm border border-pink-100 max-w-2xl">
+          <h2 className="text-base font-extrabold text-gray-800 mb-4 flex items-center gap-2">
+            <Store className="w-5 h-5 text-rose-500" />
+            <span>Informasi Kios & Struk Pembelian</span>
+          </h2>
+
+          <form onSubmit={handleSaveSettings} className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-gray-700 mb-1">
+                Nama Toko / Kios
+              </label>
+              <input
+                type="text"
+                value={settings.store_name}
+                onChange={(e) => setSettings({ ...settings, store_name: e.target.value })}
+                className="w-full px-4 py-2.5 text-xs bg-pink-50/50 border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400 font-semibold"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-700 mb-1">
+                Alamat Kios Lengkap
+              </label>
+              <input
+                type="text"
+                value={settings.address || ""}
+                onChange={(e) => setSettings({ ...settings, address: e.target.value })}
+                className="w-full px-4 py-2.5 text-xs bg-pink-50/50 border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-700 mb-1">
+                Nomor WhatsApp Toko (Untuk Kirim Nota)
+              </label>
+              <input
+                type="tel"
+                value={settings.whatsapp_number || ""}
+                onChange={(e) => setSettings({ ...settings, whatsapp_number: e.target.value })}
+                placeholder="08xxxxxxxxxx"
+                className="w-full px-4 py-2.5 text-xs bg-pink-50/50 border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-700 mb-1">
+                Catatan Kaki Struk (Receipt Footer)
+              </label>
+              <textarea
+                rows={2}
+                value={settings.receipt_footer || ""}
+                onChange={(e) => setSettings({ ...settings, receipt_footer: e.target.value })}
+                className="w-full px-4 py-2.5 text-xs bg-pink-50/50 border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400"
+              />
+            </div>
+
+            {/* Change Admin PIN */}
+            <div className="pt-3 border-t border-pink-100">
+              <label className="block text-xs font-bold text-gray-700 mb-1 flex items-center gap-1.5">
+                <KeyRound className="w-4 h-4 text-rose-500" />
+                <span>Ganti PIN Keamanan Admin (Opsional)</span>
+              </label>
+              <input
+                type="password"
+                maxLength={6}
+                value={newPin}
+                onChange={(e) => setNewPin(e.target.value)}
+                placeholder="Kosongkan jika tidak ingin ganti PIN"
+                className="w-full px-4 py-2.5 text-xs bg-pink-50/50 border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400"
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="w-full py-3.5 bg-rose-500 text-white font-bold text-xs rounded-2xl shadow-md shadow-rose-200 hover:bg-rose-600 active:scale-95 transition-all flex items-center justify-center gap-2 btn-bounce min-h-[48px]"
+            >
+              <Save className="w-4 h-4" />
+              <span>Simpan Profil & Pengaturan</span>
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* TAB 2: MENU & PRODUK CRUD */}
+      {activeTab === "products" && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+          {/* Form Create/Edit */}
+          <div className="lg:col-span-5 bg-white rounded-3xl p-5 shadow-sm border border-pink-100">
+            <h2 className="text-sm font-extrabold text-gray-800 mb-3 flex items-center justify-between">
+              <span>{isEditingProduct ? "Edit Menu Produk" : "Tambah Menu Baru"}</span>
+              {isEditingProduct && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditingProduct(false);
+                    setProductForm({
+                      id: "",
+                      name: "",
+                      category: "Ayam",
+                      price: 0,
+                      is_available: true,
+                      icon_or_image_url: "🍗",
+                    });
+                  }}
+                  className="text-xs text-rose-500 hover:underline font-normal"
+                >
+                  Batal Edit
+                </button>
+              )}
+            </h2>
+
+            <form onSubmit={handleSaveProduct} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Nama Menu</label>
+                <input
+                  type="text"
+                  placeholder="Contoh: Dada Krispi Pedas"
+                  value={productForm.name}
+                  onChange={(e) => setProductForm({ ...productForm, name: e.target.value })}
+                  className="w-full px-3.5 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400 font-semibold"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Kategori</label>
+                  <select
+                    value={productForm.category}
+                    onChange={(e) => setProductForm({ ...productForm, category: e.target.value })}
+                    className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400"
+                  >
+                    <option value="Ayam">Ayam</option>
+                    <option value="Makanan">Makanan</option>
+                    <option value="Minuman">Minuman</option>
+                    <option value="Paket">Paket</option>
+                    <option value="Lainnya">Lainnya</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Ikon / Emoji</label>
+                  <input
+                    type="text"
+                    value={productForm.icon_or_image_url || "🍗"}
+                    onChange={(e) => setProductForm({ ...productForm, icon_or_image_url: e.target.value })}
+                    className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl text-center"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Harga Jual (Rp)</label>
+                <input
+                  type="number"
+                  value={productForm.price || ""}
+                  onChange={(e) => setProductForm({ ...productForm, price: Number(e.target.value) || 0 })}
+                  className="w-full px-3.5 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-bold text-rose-600 focus:ring-2 focus:ring-rose-400"
+                  required
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="availCheck"
+                  checked={productForm.is_available}
+                  onChange={(e) => setProductForm({ ...productForm, is_available: e.target.checked })}
+                  className="w-4 h-4 text-rose-500 rounded border-gray-300 focus:ring-rose-400"
+                />
+                <label htmlFor="availCheck" className="text-xs font-semibold text-gray-700">
+                  Status Tersedia untuk Dijual
+                </label>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-3 bg-rose-500 text-white font-bold text-xs rounded-2xl shadow-md shadow-rose-200 hover:bg-rose-600 active:scale-95 transition-all flex items-center justify-center gap-1.5 min-h-[48px]"
+              >
+                {isEditingProduct ? <Save className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                <span>{isEditingProduct ? "Perbarui Menu" : "Tambah ke Menu"}</span>
+              </button>
+            </form>
+          </div>
+
+          {/* Product List */}
+          <div className="lg:col-span-7 bg-white rounded-3xl p-5 shadow-sm border border-pink-100">
+            <h2 className="text-sm font-extrabold text-gray-800 mb-3">
+              Daftar Menu Aktif ({products.length})
+            </h2>
+
+            <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
+              {products.map((p) => (
+                <div
+                  key={p.id}
+                  className="p-3 bg-pink-50/40 rounded-2xl border border-pink-100 flex items-center justify-between gap-2"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl p-2 bg-white rounded-xl shadow-xs">
+                      {p.icon_or_image_url || "🍗"}
+                    </span>
+                    <div>
+                      <h4 className="font-bold text-xs text-gray-800">{p.name}</h4>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[10px] text-gray-500 bg-white px-2 py-0.5 rounded-full border border-pink-100">
+                          {p.category}
+                        </span>
+                        <span className="text-xs font-black text-rose-600">
+                          {formatRupiah(p.price)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    {/* Toggle Availability */}
+                    <button
+                      type="button"
+                      onClick={() => handleToggleProductAvailability(p)}
+                      className={`px-2.5 py-1 text-[10px] font-bold rounded-xl border transition-all ${
+                        p.is_available
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : "bg-gray-100 text-gray-500 border-gray-300"
+                      }`}
+                    >
+                      {p.is_available ? "Tersedia" : "Habis"}
+                    </button>
+
+                    {/* Edit */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsEditingProduct(true);
+                        setProductForm({
+                          id: p.id,
+                          name: p.name,
+                          category: p.category,
+                          price: p.price,
+                          is_available: p.is_available,
+                          icon_or_image_url: p.icon_or_image_url || "🍗",
+                        });
+                      }}
+                      className="p-2 text-gray-500 hover:text-rose-600 hover:bg-white rounded-xl transition-colors"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+
+                    {/* Delete */}
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteProduct(p.id)}
+                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-white rounded-xl transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 3: VARIAN & ADD-ON CRUD */}
+      {activeTab === "addons" && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+          {/* Addon Form */}
+          <div className="lg:col-span-5 bg-white rounded-3xl p-5 shadow-sm border border-pink-100">
+            <h2 className="text-sm font-extrabold text-gray-800 mb-3 flex items-center justify-between">
+              <span>{isEditingAddon ? "Edit Saus Pelengkap" : "Tambah Saus / Pelengkap"}</span>
+              {isEditingAddon && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditingAddon(false);
+                    setAddonForm({ id: "", name: "", price: 0 });
+                  }}
+                  className="text-xs text-rose-500 hover:underline font-normal"
+                >
+                  Batal Edit
+                </button>
+              )}
+            </h2>
+
+            <form onSubmit={handleSaveAddon} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Nama Saus / Add-on</label>
+                <input
+                  type="text"
+                  placeholder="Contoh: Saus Keju Lumer"
+                  value={addonForm.name}
+                  onChange={(e) => setAddonForm({ ...addonForm, name: e.target.value })}
+                  className="w-full px-3.5 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400 font-semibold"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Harga Tambahan (Rp)</label>
+                <input
+                  type="number"
+                  value={addonForm.price || ""}
+                  onChange={(e) => setAddonForm({ ...addonForm, price: Number(e.target.value) || 0 })}
+                  className="w-full px-3.5 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-bold text-rose-600"
+                  required
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-3 bg-rose-500 text-white font-bold text-xs rounded-2xl shadow-md shadow-rose-200 hover:bg-rose-600 active:scale-95 transition-all flex items-center justify-center gap-1.5 min-h-[48px]"
+              >
+                {isEditingAddon ? <Save className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                <span>{isEditingAddon ? "Perbarui Varian" : "Tambah Varian Saus"}</span>
+              </button>
+            </form>
+          </div>
+
+          {/* Addon List */}
+          <div className="lg:col-span-7 bg-white rounded-3xl p-5 shadow-sm border border-pink-100">
+            <h2 className="text-sm font-extrabold text-gray-800 mb-3">
+              Daftar Saus & Pelengkap ({addons.length})
+            </h2>
+
+            <div className="space-y-2">
+              {addons.map((a) => (
+                <div
+                  key={a.id}
+                  className="p-3 bg-pink-50/40 rounded-2xl border border-pink-100 flex items-center justify-between"
+                >
+                  <div>
+                    <h4 className="font-bold text-xs text-gray-800">{a.name}</h4>
+                    <span className="text-xs font-black text-rose-600">
+                      +{formatRupiah(a.price)}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsEditingAddon(true);
+                        setAddonForm({ id: a.id, name: a.name, price: a.price });
+                      }}
+                      className="p-2 text-gray-500 hover:text-rose-600 hover:bg-white rounded-xl transition-colors"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteAddon(a.id)}
+                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-white rounded-xl transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 4: MASTER BAHAN BAKU CRUD */}
+      {activeTab === "inventory" && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+          {/* Inventory Form */}
+          <div className="lg:col-span-5 bg-white rounded-3xl p-5 shadow-sm border border-pink-100">
+            <h2 className="text-sm font-extrabold text-gray-800 mb-3 flex items-center justify-between">
+              <span>{isEditingInventory ? "Edit Master Bahan" : "Tambah Bahan Baku Baru"}</span>
+              {isEditingInventory && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditingInventory(false);
+                    setInventoryForm({
+                      id: "",
+                      name: "",
+                      unit: "potong",
+                      min_stock: 10,
+                      current_stock: 50,
+                    });
+                  }}
+                  className="text-xs text-rose-500 hover:underline font-normal"
+                >
+                  Batal Edit
+                </button>
+              )}
+            </h2>
+
+            <form onSubmit={handleSaveInventory} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Nama Bahan Baku</label>
+                <input
+                  type="text"
+                  placeholder="Contoh: Daging Ayam Segar"
+                  value={inventoryForm.name}
+                  onChange={(e) => setInventoryForm({ ...inventoryForm, name: e.target.value })}
+                  className="w-full px-3.5 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400 font-semibold"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Satuan</label>
+                  <select
+                    value={inventoryForm.unit}
+                    onChange={(e) => setInventoryForm({ ...inventoryForm, unit: e.target.value })}
+                    className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl"
+                  >
+                    <option value="potong">potong</option>
+                    <option value="kg">kg</option>
+                    <option value="liter">liter</option>
+                    <option value="pack">pack</option>
+                    <option value="pcs">pcs</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Batas Minimum Stok</label>
+                  <input
+                    type="number"
+                    value={inventoryForm.min_stock}
+                    onChange={(e) => setInventoryForm({ ...inventoryForm, min_stock: Number(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Stok Awal Sekarang</label>
+                <input
+                  type="number"
+                  value={inventoryForm.current_stock}
+                  onChange={(e) => setInventoryForm({ ...inventoryForm, current_stock: Number(e.target.value) || 0 })}
+                  className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-bold"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-3 bg-rose-500 text-white font-bold text-xs rounded-2xl shadow-md shadow-rose-200 hover:bg-rose-600 active:scale-95 transition-all flex items-center justify-center gap-1.5 min-h-[48px]"
+              >
+                {isEditingInventory ? <Save className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                <span>{isEditingInventory ? "Perbarui Bahan" : "Daftarkan Bahan Baku"}</span>
+              </button>
+            </form>
+          </div>
+
+          {/* Inventory Items List */}
+          <div className="lg:col-span-7 bg-white rounded-3xl p-5 shadow-sm border border-pink-100">
+            <h2 className="text-sm font-extrabold text-gray-800 mb-3">
+              Master Bahan Baku ({inventoryItems.length})
+            </h2>
+
+            <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
+              {inventoryItems.map((item) => (
+                <div
+                  key={item.id}
+                  className="p-3 bg-pink-50/40 rounded-2xl border border-pink-100 flex items-center justify-between"
+                >
+                  <div>
+                    <h4 className="font-bold text-xs text-gray-800">{item.name}</h4>
+                    <p className="text-[10px] text-gray-500">
+                      Stok: <span className="font-bold text-gray-700">{item.current_stock} {item.unit}</span> (Min: {item.min_stock} {item.unit})
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsEditingInventory(true);
+                        setInventoryForm({
+                          id: item.id,
+                          name: item.name,
+                          unit: item.unit,
+                          min_stock: item.min_stock,
+                          current_stock: item.current_stock,
+                        });
+                      }}
+                      className="p-2 text-gray-500 hover:text-rose-600 hover:bg-white rounded-xl transition-colors"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteInventory(item.id)}
+                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-white rounded-xl transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 5: HYBRID QRIS CONFIG */}
+      {activeTab === "qris" && (
+        <div className="bg-white rounded-3xl p-6 shadow-sm border border-pink-100 max-w-2xl">
+          <h2 className="text-base font-extrabold text-gray-800 mb-2 flex items-center gap-2">
+            <QrCode className="w-5 h-5 text-rose-500" />
+            <span>Pengaturan Mode QRIS Hybrid</span>
+          </h2>
+          <p className="text-xs text-gray-500 mb-6">
+            Pilih antara QRIS Statis (manual konfirmasi kasir tanpa potongan) atau QRIS Dinamis (otomatis payment gateway).
+          </p>
+
+          <form onSubmit={handleSaveSettings} className="space-y-5">
+            {/* Mode Selector */}
+            <div className="grid grid-cols-2 gap-3">
+              <label
+                onClick={() => setSettings({ ...settings, qris_mode: "static" })}
+                className={`p-4 rounded-2xl border cursor-pointer flex flex-col justify-between transition-all btn-bounce ${
+                  settings.qris_mode === "static"
+                    ? "bg-rose-50/70 border-rose-400 shadow-sm"
+                    : "bg-white border-pink-100 hover:bg-pink-50/30"
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-extrabold text-xs text-gray-800">Mode A: Statis</span>
+                    {settings.qris_mode === "static" && (
+                      <Check className="w-4 h-4 text-rose-600 stroke-[3]" />
+                    )}
+                  </div>
+                  <p className="text-[11px] text-gray-500">
+                    Kasir menunjukkan barcode toko & konfirmasi manual setelah dicek. Tanpa potongan fee gateway.
+                  </p>
+                </div>
+              </label>
+
+              <label
+                onClick={() => setSettings({ ...settings, qris_mode: "dynamic" })}
+                className={`p-4 rounded-2xl border cursor-pointer flex flex-col justify-between transition-all btn-bounce ${
+                  settings.qris_mode === "dynamic"
+                    ? "bg-rose-50/70 border-rose-400 shadow-sm"
+                    : "bg-white border-pink-100 hover:bg-pink-50/30"
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-extrabold text-xs text-gray-800">Mode B: Dinamis</span>
+                    {settings.qris_mode === "dynamic" && (
+                      <Check className="w-4 h-4 text-rose-600 stroke-[3]" />
+                    )}
+                  </div>
+                  <p className="text-[11px] text-gray-500">
+                    Membuat QRIS per transaksi melalui payment gateway dengan auto-check verifikasi lunas.
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            {/* Static QRIS Settings */}
+            {settings.qris_mode === "static" && (
+              <div className="p-4 bg-pink-50/40 rounded-2xl border border-pink-100 space-y-3">
+                <label className="block text-xs font-bold text-gray-700">
+                  URL Gambar Barcode QRIS Toko
+                </label>
+                <input
+                  type="url"
+                  placeholder="https://..."
+                  value={settings.qris_static_image_url || ""}
+                  onChange={(e) =>
+                    setSettings({ ...settings, qris_static_image_url: e.target.value })
+                  }
+                  className="w-full px-3.5 py-2.5 text-xs bg-white border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400"
+                />
+                <p className="text-[11px] text-gray-500">
+                  Masukkan link gambar barcode QRIS statis kios LA Fried Chicken dari LinkAja/BCA/ShopeePay/Gopay.
+                </p>
+
+                {settings.qris_static_image_url && (
+                  <div className="w-36 h-36 mx-auto bg-white p-2 rounded-xl border border-pink-200 mt-2">
+                    <img
+                      src={settings.qris_static_image_url}
+                      alt="Preview QRIS"
+                      className="w-full h-full object-contain rounded-lg"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Dynamic Gateway Settings */}
+            {settings.qris_mode === "dynamic" && (
+              <div className="p-4 bg-pink-50/40 rounded-2xl border border-pink-100 space-y-3">
+                <p className="text-xs font-bold text-gray-800">Konfigurasi Gateway Dinamis</p>
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-600 mb-1">
+                    Provider Gateway
+                  </label>
+                  <select className="w-full px-3 py-2 text-xs bg-white border border-pink-200 rounded-xl">
+                    <option value="midtrans">Midtrans Snap QRIS</option>
+                    <option value="tripay">Tripay Closed Payment</option>
+                    <option value="xendit">Xendit QR</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-600 mb-1">
+                    Server Key / API Key
+                  </label>
+                  <input
+                    type="password"
+                    placeholder="SB-Mid-server-xxxxxxxxxxxx"
+                    className="w-full px-3.5 py-2 text-xs bg-white border border-pink-200 rounded-xl"
+                  />
+                </div>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="w-full py-3.5 bg-rose-500 text-white font-bold text-xs rounded-2xl shadow-md shadow-rose-200 hover:bg-rose-600 active:scale-95 transition-all flex items-center justify-center gap-2 btn-bounce min-h-[48px]"
+            >
+              <Save className="w-4 h-4" />
+              <span>Simpan Konfigurasi QRIS</span>
+            </button>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
