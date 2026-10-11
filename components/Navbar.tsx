@@ -23,7 +23,7 @@ export default function Navbar() {
   useEffect(() => {
     async function checkDrawer() {
       try {
-        const { data } = await supabase
+        const { data, error } = await supabase
           .from("cash_drawers")
           .select("*")
           .eq("status", "open")
@@ -31,9 +31,15 @@ export default function Navbar() {
           .limit(1)
           .maybeSingle();
 
-        setActiveDrawer(data || null);
+        if (data) {
+          setActiveDrawer(data);
+        } else {
+          const local = typeof window !== "undefined" ? localStorage.getItem("la_active_drawer") : null;
+          setActiveDrawer(local ? JSON.parse(local) : null);
+        }
       } catch (err) {
-        console.error("Error checking active drawer:", err);
+        const local = typeof window !== "undefined" ? localStorage.getItem("la_active_drawer") : null;
+        setActiveDrawer(local ? JSON.parse(local) : null);
       }
     }
     checkDrawer();

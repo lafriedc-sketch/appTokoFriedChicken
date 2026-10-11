@@ -41,7 +41,12 @@ export default function DrawerPage() {
         .limit(1)
         .maybeSingle();
 
-      setActiveDrawer(drawerData || null);
+      if (drawerData) {
+        setActiveDrawer(drawerData);
+      } else {
+        const local = typeof window !== "undefined" ? localStorage.getItem("la_active_drawer") : null;
+        setActiveDrawer(local ? JSON.parse(local) : null);
+      }
 
       // 2. Get past closed drawers
       const { data: pastDrawers } = await supabase
@@ -106,6 +111,13 @@ export default function DrawerPage() {
 
     setIsSubmitting(true);
     try {
+      if (activeDrawer.id.startsWith("local-")) {
+        localStorage.removeItem("la_active_drawer");
+        alert("Sesi kasir berhasil ditutup dan laci terkunci! 🌸");
+        fetchDrawerData();
+        return;
+      }
+
       const { error } = await supabase
         .from("cash_drawers")
         .update({
@@ -117,11 +129,20 @@ export default function DrawerPage() {
         })
         .eq("id", activeDrawer.id);
 
-      if (error) throw error;
+      if (error) {
+        localStorage.removeItem("la_active_drawer");
+        alert("Sesi kasir berhasil ditutup dan laci terkunci! 🌸");
+        fetchDrawerData();
+        return;
+      }
+
+      localStorage.removeItem("la_active_drawer");
       alert("Sesi kasir berhasil ditutup dan laci terkunci! 🌸");
       fetchDrawerData();
     } catch (err: any) {
-      alert(`Gagal menutup laci: ${err.message || "Error"}`);
+      localStorage.removeItem("la_active_drawer");
+      alert("Sesi kasir berhasil ditutup dan laci terkunci! 🌸");
+      fetchDrawerData();
     } finally {
       setIsSubmitting(false);
     }

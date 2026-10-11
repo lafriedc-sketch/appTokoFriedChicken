@@ -35,14 +35,47 @@ export default function InitialDrawerModal({ isOpen, onSuccess }: InitialDrawerM
         opened_at: new Date().toISOString(),
       });
 
-      if (error) throw error;
+      if (error) {
+        if (error.code === "PGRST205" || error.message?.includes("schema cache")) {
+          // Fallback to local storage so user can test the app immediately
+          localStorage.setItem(
+            "la_active_drawer",
+            JSON.stringify({
+              id: "local-drawer-" + Date.now(),
+              initial_cash: initialCash,
+              status: "open",
+              opened_at: new Date().toISOString(),
+            })
+          );
+          setErrorMsg("TABLE_NOT_FOUND");
+          return;
+        }
+        throw error;
+      }
       onSuccess();
     } catch (err: any) {
       console.error("Gagal membuka laci:", err);
-      setErrorMsg(err.message || "Gagal membuka sesi laci kasir");
+      if (err.code === "PGRST205" || err.message?.includes("schema cache")) {
+        setErrorMsg("TABLE_NOT_FOUND");
+      } else {
+        setErrorMsg(err.message || "Gagal membuka sesi laci kasir");
+      }
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleUseDemoMode = () => {
+    localStorage.setItem(
+      "la_active_drawer",
+      JSON.stringify({
+        id: "local-drawer-" + Date.now(),
+        initial_cash: initialCash,
+        status: "open",
+        opened_at: new Date().toISOString(),
+      })
+    );
+    onSuccess();
   };
 
   return (
@@ -106,8 +139,35 @@ export default function InitialDrawerModal({ isOpen, onSuccess }: InitialDrawerM
         </div>
 
         {errorMsg && (
-          <div className="p-3 mb-4 bg-red-50 text-red-600 rounded-xl text-xs font-medium border border-red-200">
-            {errorMsg}
+          <div className="mb-4">
+            {errorMsg === "TABLE_NOT_FOUND" ? (
+              <div className="p-3.5 bg-rose-50 text-rose-800 rounded-2xl text-left border border-rose-200 space-y-2">
+                <div className="flex items-center gap-1.5 font-extrabold text-xs text-rose-600">
+                  <span>⚠️</span>
+                  <span>Tabel Supabase Belum Dibuat!</span>
+                </div>
+                <p className="text-[11px] text-gray-600 leading-relaxed">
+                  Skema database belum dieksekusi di Supabase. Silakan jalankan file{" "}
+                  <code className="bg-white px-1.5 py-0.5 rounded border border-rose-200 text-rose-600 font-bold">
+                    supabase/schema.sql
+                  </code>{" "}
+                  di SQL Editor Supabase.
+                </p>
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={handleUseDemoMode}
+                    className="w-full py-2.5 bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs rounded-xl shadow-sm transition-all btn-bounce"
+                  >
+                    Lanjutkan dengan Mode Demo (Penyimpanan Lokal) 🌸
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3 bg-red-50 text-red-600 rounded-xl text-xs font-medium border border-red-200">
+                {errorMsg}
+              </div>
+            )}
           </div>
         )}
 
