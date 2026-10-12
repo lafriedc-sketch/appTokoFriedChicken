@@ -284,9 +284,47 @@ export default function POSPage() {
       };
     });
 
+    // Simpan riwayat transaksi kasir ke local memory untuk audit trail offline/online
+    const saveCashierHistory = (tx: Transaction) => {
+      try {
+        const cName = tx.cashier_name || cashierSession?.name || "Kasir";
+        const mapList = JSON.parse(localStorage.getItem("la_cashier_transactions_map") || "[]");
+        mapList.unshift({
+          id: tx.id,
+          receipt_no: tx.receipt_no,
+          cashier_name: cName,
+          total_amount: tx.total_amount,
+          payment_method: tx.payment_method,
+          cash_received: tx.cash_received,
+          cash_change: tx.cash_change,
+          status: tx.status,
+          created_at: tx.created_at || new Date().toISOString(),
+          items: tx.items || [],
+        });
+        localStorage.setItem("la_cashier_transactions_map", JSON.stringify(mapList.slice(0, 500)));
+
+        const actLogs = JSON.parse(localStorage.getItem("la_cashier_activity_logs") || "[]");
+        actLogs.unshift({
+          id: "act-" + Date.now(),
+          cashier_name: cName,
+          action: "sale",
+          details: `Input transaksi #${tx.receipt_no} - Total ${formatRupiah(tx.total_amount)}`,
+          receipt_no: tx.receipt_no,
+          amount: tx.total_amount,
+          created_at: new Date().toISOString(),
+        });
+        localStorage.setItem("la_cashier_activity_logs", JSON.stringify(actLogs.slice(0, 200)));
+      } catch (err) {
+        console.error("Gagal simpan log riwayat kasir:", err);
+      }
+    };
+
+    const currentCashierName = cashierSession?.name || "Kasir";
+
     try {
-      // 1. Insert Transaction
-      const { data: transData, error: transErr } = await supabase
+      // 1. Insert Transaction (Mencoba dengan kolom cashier_name)
+      let transData: any = null;
+      const { data: tData, error: transErr } = await supabase
         .from("transactions")
         .insert({
           receipt_no: receiptNo,
@@ -295,12 +333,52 @@ export default function POSPage() {
           cash_received: finalCashReceived,
           cash_change: finalChange,
           status: "completed",
+          cashier_name: currentCashierName,
         })
         .select()
         .single();
 
       if (transErr) {
-        if (transErr.code === "PGRST205" || transErr.message?.includes("schema cache")) {
+        // Jika kolom cashier_name belum ada di schema Supabase, fallback insert tanpa kolom tersebut
+        if (transErr.message?.includes("cashier_name") || transErr.code === "PGRST204") {
+          const { data: retryData, error: retryErr } = await supabase
+            .from("transactions")
+            .insert({
+              receipt_no: receiptNo,
+              total_amount: cartTotal,
+              payment_method: paymentMethod,
+              cash_received: finalCashReceived,
+              cash_change: finalChange,
+              status: "completed",
+            })
+            .select()
+            .single();
+
+          if (retryErr) {
+            if (retryErr.code === "PGRST205" || retryErr.message?.includes("schema cache")) {
+              const demoTx: Transaction = {
+                id: "demo-tx-" + Date.now(),
+                receipt_no: receiptNo,
+                total_amount: cartTotal,
+                payment_method: paymentMethod,
+                cash_received: finalCashReceived,
+                cash_change: finalChange,
+                status: "completed",
+                cashier_name: currentCashierName,
+                created_at: new Date().toISOString(),
+                items: transactionItemsPayload,
+              };
+              saveCashierHistory(demoTx);
+              setLastTransaction(demoTx);
+              setCart([]);
+              setIsCheckoutOpen(false);
+              setShowCelebration(true);
+              return;
+            }
+            throw retryErr;
+          }
+          transData = retryData;
+        } else if (transErr.code === "PGRST205" || transErr.message?.includes("schema cache")) {
           // Graceful demo transaction
           const demoTx: Transaction = {
             id: "demo-tx-" + Date.now(),
@@ -310,16 +388,21 @@ export default function POSPage() {
             cash_received: finalCashReceived,
             cash_change: finalChange,
             status: "completed",
+            cashier_name: currentCashierName,
             created_at: new Date().toISOString(),
             items: transactionItemsPayload,
           };
+          saveCashierHistory(demoTx);
           setLastTransaction(demoTx);
           setCart([]);
           setIsCheckoutOpen(false);
           setShowCelebration(true);
           return;
+        } else {
+          throw transErr;
         }
-        throw transErr;
+      } else {
+        transData = tData;
       }
 
       // 2. Insert Transaction Items
@@ -336,9 +419,11 @@ export default function POSPage() {
 
       const completedTransaction: Transaction = {
         ...transData,
+        cashier_name: currentCashierName,
         items: transactionItemsPayload,
       };
 
+      saveCashierHistory(completedTransaction);
       setLastTransaction(completedTransaction);
       setCart([]);
       setIsCheckoutOpen(false);
@@ -354,9 +439,11 @@ export default function POSPage() {
         cash_received: finalCashReceived,
         cash_change: finalChange,
         status: "completed",
+        cashier_name: currentCashierName,
         created_at: new Date().toISOString(),
         items: transactionItemsPayload,
       };
+      saveCashierHistory(demoTx);
       setLastTransaction(demoTx);
       setCart([]);
       setIsCheckoutOpen(false);

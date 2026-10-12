@@ -53,6 +53,7 @@ export interface Transaction {
   cash_received: number;
   cash_change: number;
   status: string;
+  cashier_name?: string;
   created_at?: string;
   items?: TransactionItem[];
 }
@@ -112,8 +113,19 @@ export interface CashierSession {
 export interface CashierUser {
   id: string;
   name: string;
-  pin: string;
+  pin: string; // PIN atau Password
   role: 'cashier' | 'admin';
   is_active: boolean;
+  created_at?: string;
+}
+
+export interface CashierActivityLog {
+  id: string;
+  cashier_name: string;
+  action: 'login' | 'sale' | 'open_drawer' | 'close_drawer';
+  details?: string;
+  receipt_no?: string;
+  amount?: number;
+  created_at: string;
 }
 

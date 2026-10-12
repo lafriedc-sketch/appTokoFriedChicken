@@ -71,6 +71,20 @@ export default function CashierLoginModal({
     };
 
     localStorage.setItem("la_active_cashier", JSON.stringify(session));
+
+    // Record activity log
+    try {
+      const logs = JSON.parse(localStorage.getItem("la_cashier_activity_logs") || "[]");
+      logs.unshift({
+        id: "act-" + Date.now(),
+        cashier_name: cashierName.trim(),
+        action: "login",
+        details: `Kasir ${cashierName.trim()} memulai shift`,
+        created_at: new Date().toISOString(),
+      });
+      localStorage.setItem("la_cashier_activity_logs", JSON.stringify(logs.slice(0, 200)));
+    } catch {}
+
     setErrorMsg("");
     onSuccess(session);
   };
@@ -129,19 +143,19 @@ export default function CashierLoginModal({
             />
           </div>
 
-          {/* PIN Input */}
+          {/* Password / PIN Input */}
           <div>
             <label className="block text-xs font-bold text-gray-700 mb-1.5 flex items-center justify-between">
-              <span>PIN Kasir (4 Digit)</span>
-              <span className="text-[10px] text-gray-400 font-normal">Default: 1234</span>
+              <span>Password / PIN Kasir</span>
+              <span className="text-[10px] text-gray-400 font-normal">Bawaan: 1234</span>
             </label>
             <input
               type="password"
-              maxLength={6}
-              placeholder="Ketik PIN..."
+              maxLength={32}
+              placeholder="Ketik password / PIN..."
               value={pin}
               onChange={(e) => setPin(e.target.value)}
-              className="w-full text-center text-xl font-black tracking-widest py-2.5 bg-pink-50/50 border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400"
+              className="w-full text-center text-lg font-bold tracking-wider py-2.5 bg-pink-50/50 border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400"
               required
             />
           </div>

@@ -22,7 +22,8 @@ import {
   Award, 
   Sparkles,
   ArrowUpRight,
-  PieChart
+  PieChart,
+  Users
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { Transaction, InventoryLog, FryingLog } from "@/types";
@@ -39,28 +40,60 @@ export default function ReportsPage() {
     try {
       setLoading(true);
 
-      // Fetch all transactions with items
-      const { data: transData } = await supabase
-        .from("transactions")
-        .select(`
-          id,
-          receipt_no,
-          total_amount,
-          payment_method,
-          cash_received,
-          cash_change,
-          status,
-          created_at,
-          transaction_items (id, product_name, qty, unit_price, subtotal)
-        `)
-        .order("created_at", { ascending: false });
+      // Fetch all transactions with items & cashier
+      let remoteTxs: any[] = [];
+      try {
+        const { data: transData } = await supabase
+          .from("transactions")
+          .select(`
+            id,
+            receipt_no,
+            total_amount,
+            payment_method,
+            cash_received,
+            cash_change,
+            status,
+            cashier_name,
+            created_at,
+            transaction_items (id, product_name, qty, unit_price, subtotal)
+          `)
+          .order("created_at", { ascending: false });
 
-      if (transData) {
-        const formatted = transData.map((t: any) => ({
-          ...t,
-          items: t.transaction_items,
-        }));
-        setTransactions(formatted);
+        if (transData) {
+          remoteTxs = transData.map((t: any) => ({
+            ...t,
+            items: t.transaction_items,
+          }));
+        }
+      } catch (e) {
+        console.warn("Gagal query remote transactions di reports:", e);
+      }
+
+      if (typeof window !== "undefined") {
+        try {
+          const localMap: Transaction[] = JSON.parse(
+            localStorage.getItem("la_cashier_transactions_map") || "[]"
+          );
+          const combined = new Map<string, Transaction>();
+          localMap.forEach((tx) => combined.set(tx.receipt_no, tx));
+          remoteTxs.forEach((tx) => {
+            const loc = combined.get(tx.receipt_no);
+            if (loc) {
+              combined.set(tx.receipt_no, {
+                ...tx,
+                cashier_name: tx.cashier_name || loc.cashier_name,
+                items: tx.items && tx.items.length > 0 ? tx.items : loc.items,
+              });
+            } else {
+              combined.set(tx.receipt_no, tx);
+            }
+          });
+          setTransactions(Array.from(combined.values()));
+        } catch {
+          setTransactions(remoteTxs);
+        }
+      } else {
+        setTransactions(remoteTxs);
       }
 
       // Fetch inventory logs (expenses)
@@ -190,20 +223,37 @@ export default function ReportsPage() {
       .slice(0, 5);
   }, [filteredData]);
 
+  // Rekap Performa Penjualan Per Kasir
+  const cashierRanking = useMemo(() => {
+    const map = new Map<string, { count: number; total: number }>();
+    filteredData.trans.forEach((t) => {
+      const c = t.cashier_name || "Kasir Utama";
+      const curr = map.get(c) || { count: 0, total: 0 };
+      map.set(c, {
+        count: curr.count + 1,
+        total: curr.total + Number(t.total_amount || 0),
+      });
+    });
+    return Array.from(map.entries())
+      .map(([name, data]) => ({ name, count: data.count, total: data.total }))
+      .sort((a, b) => b.total - a.total);
+  }, [filteredData]);
+
   // Export CSV
   const handleExportCSV = () => {
-    const headers = ["No Nota", "Waktu", "Metode", "Total Belanja", "Tunai Diterima", "Kembalian"];
+    const headers = ["No Nota", "Waktu", "Kasir", "Metode", "Total Belanja", "Tunai Diterima", "Kembalian"];
     const rows = filteredData.trans.map((t) => [
       t.receipt_no,
-      t.created_at || "",
-      t.payment_method,
+      t.created_at ? new Date(t.created_at).toLocaleString("id-ID") : "",
+      `"${t.cashier_name || "Kasir Utama"}"`,
+      t.payment_method.toUpperCase(),
       t.total_amount,
       t.cash_received,
       t.cash_change,
     ]);
 
     const csvContent =
-      "data:text/csv;charset=utf-8," +
+      "data:text/csv;charset=utf-8,\uFEFF" +
       [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
 
     const encodedUri = encodeURI(csvContent);
@@ -397,9 +447,52 @@ export default function ReportsPage() {
       </div>
 
       {/* REKAP OPERASIONAL & TOP MENU */}
+      {/* REKAP KINERJA KASIR & TOP MENU */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        {/* Rekap Kinerja Kasir */}
+        <div className="lg:col-span-6 bg-white rounded-3xl p-5 shadow-sm border border-pink-100">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4 text-rose-500" />
+              <h3 className="font-extrabold text-sm text-gray-800">
+                Rekap Inputan Per Kasir
+              </h3>
+            </div>
+            <span className="text-xs font-semibold text-rose-500">Staf Bertugas</span>
+          </div>
+
+          <div className="space-y-2.5">
+            {cashierRanking.map((c, idx) => (
+              <div
+                key={c.name}
+                className="p-3 bg-pink-50/40 rounded-2xl border border-pink-100 flex items-center justify-between text-xs"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="w-7 h-7 rounded-xl bg-white text-gray-700 font-bold text-xs flex items-center justify-center border border-pink-100 shadow-xs">
+                    👤
+                  </span>
+                  <div>
+                    <h4 className="font-bold text-gray-800">{c.name}</h4>
+                    <span className="text-[10px] text-gray-500">{c.count} nota diinput</span>
+                  </div>
+                </div>
+
+                <span className="font-black text-rose-600">
+                  {formatRupiah(c.total)}
+                </span>
+              </div>
+            ))}
+
+            {cashierRanking.length === 0 && (
+              <p className="text-xs text-gray-400 text-center py-6">
+                Belum ada data inputan kasir di periode ini.
+              </p>
+            )}
+          </div>
+        </div>
+
         {/* Top Menu Laris */}
-        <div className="lg:col-span-7 bg-white rounded-3xl p-5 shadow-sm border border-pink-100">
+        <div className="lg:col-span-6 bg-white rounded-3xl p-5 shadow-sm border border-pink-100">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Award className="w-4 h-4 text-rose-500" />
@@ -439,39 +532,28 @@ export default function ReportsPage() {
             )}
           </div>
         </div>
+      </div>
 
-        {/* Ekspor Laporan & Tombol Aksi */}
-        <div className="lg:col-span-5 bg-white rounded-3xl p-5 shadow-sm border border-pink-100 flex flex-col justify-between">
-          <div>
-            <h3 className="font-extrabold text-sm text-gray-800 mb-1 flex items-center gap-2">
-              <Download className="w-4 h-4 text-rose-500" />
-              <span>Ekspor Data Transaksi</span>
-            </h3>
-            <p className="text-xs text-gray-500 mb-4">
-              Unduh rekap transaksi format CSV untuk pembukuan Excel toko LA Fried Chicken.
-            </p>
-
-            <div className="p-3 bg-pink-50/50 rounded-2xl border border-pink-100 mb-4 text-xs space-y-1">
-              <div className="flex justify-between">
-                <span className="text-gray-500">Filter Aktif:</span>
-                <span className="font-bold text-gray-800 uppercase">{timeFilter}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">Jumlah Transaksi:</span>
-                <span className="font-bold text-gray-800">{filteredData.trans.length} nota</span>
-              </div>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={handleExportCSV}
-            className="w-full py-4 bg-rose-500 text-white font-bold text-xs rounded-2xl shadow-md shadow-rose-200 hover:bg-rose-600 active:scale-95 transition-all flex items-center justify-center gap-2 btn-bounce min-h-[48px]"
-          >
-            <Download className="w-4 h-4" />
-            <span>Export Laporan Hari Ini (.CSV)</span>
-          </button>
+      {/* Ekspor Laporan & Tombol Aksi */}
+      <div className="bg-white rounded-3xl p-5 shadow-sm border border-pink-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h3 className="font-extrabold text-sm text-gray-800 mb-1 flex items-center gap-2">
+            <Download className="w-4 h-4 text-rose-500" />
+            <span>Ekspor Data Transaksi Lengkap (Termasuk Kasir)</span>
+          </h3>
+          <p className="text-xs text-gray-500">
+            Unduh rekap data transaksi format CSV (kompatibel Excel) mencakup nomor nota, nama kasir, jam, dan total penjualan.
+          </p>
         </div>
+
+        <button
+          type="button"
+          onClick={handleExportCSV}
+          className="py-3 px-6 bg-rose-500 text-white font-bold text-xs rounded-2xl shadow-md shadow-rose-200 hover:bg-rose-600 active:scale-95 transition-all flex items-center justify-center gap-2 btn-bounce min-h-[48px] whitespace-nowrap"
+        >
+          <Download className="w-4 h-4" />
+          <span>Export Laporan CSV</span>
+        </button>
       </div>
     </div>
   );

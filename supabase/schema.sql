@@ -64,8 +64,12 @@ CREATE TABLE IF NOT EXISTS transactions (
     cash_received NUMERIC(12, 2) NOT NULL DEFAULT 0,
     cash_change NUMERIC(12, 2) NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'completed',
+    cashier_name TEXT DEFAULT 'Kasir',
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
+
+-- Migration safety for existing database
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS cashier_name TEXT DEFAULT 'Kasir';
 
 -- Tabel Detail Item Transaksi
 CREATE TABLE IF NOT EXISTS transaction_items (

@@ -22,11 +22,22 @@ import {
   ShieldCheck,
   Upload,
   Image as ImageIcon,
-  Camera
+  Camera,
+  Eye,
+  EyeOff,
+  History,
+  Search,
+  Download,
+  X,
+  Calendar,
+  DollarSign,
+  CheckCircle2,
+  Receipt,
+  ChevronRight
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
-import { Product, ProductAddon, InventoryItem, StoreSettings, CashierUser } from "@/types";
-import { formatRupiah } from "@/lib/utils";
+import { Product, ProductAddon, InventoryItem, StoreSettings, CashierUser, Transaction, CashierActivityLog } from "@/types";
+import { formatRupiah, formatDateIndo } from "@/lib/utils";
 
 export default function AdminPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -58,6 +69,23 @@ export default function AdminPage() {
   const [adminOldPinInput, setAdminOldPinInput] = useState("");
   const [adminNewPinInput, setAdminNewPinInput] = useState("");
   const [adminConfirmPinInput, setAdminConfirmPinInput] = useState("");
+
+  // Cashier History & Transactions State
+  const [adminTransactions, setAdminTransactions] = useState<Transaction[]>([]);
+  const [activityLogs, setActivityLogs] = useState<CashierActivityLog[]>([]);
+  const [selectedCashierForHistory, setSelectedCashierForHistory] = useState<CashierUser | null>(null);
+  const [historyFilterDate, setHistoryFilterDate] = useState<"all" | "today" | "7days">("all");
+  const [historySearchQuery, setHistorySearchQuery] = useState("");
+  const [historyTab, setHistoryTab] = useState<"transactions" | "logs">("transactions");
+
+  // Edit Cashier Modal State
+  const [editingCashier, setEditingCashier] = useState<CashierUser | null>(null);
+  const [editCashierName, setEditCashierName] = useState("");
+  const [editCashierPin, setEditCashierPin] = useState("");
+  const [editCashierActive, setEditCashierActive] = useState(true);
+
+  // Toggle show password per cashier
+  const [showPasswordMap, setShowPasswordMap] = useState<Record<string, boolean>>({});
 
   // Form states
   // Product Form
@@ -150,6 +178,68 @@ export default function AdminPage() {
           localStorage.setItem("la_cashier_users", JSON.stringify(defaultUsers));
         }
       }
+
+      // 6. Fetch Transactions for Cashier History
+      let remoteTxs: Transaction[] = [];
+      try {
+        const { data: tData } = await supabase
+          .from("transactions")
+          .select(`
+            id,
+            receipt_no,
+            total_amount,
+            payment_method,
+            cash_received,
+            cash_change,
+            status,
+            cashier_name,
+            created_at,
+            transaction_items (id, product_name, qty, unit_price, subtotal)
+          `)
+          .order("created_at", { ascending: false });
+
+        if (tData) {
+          remoteTxs = tData.map((t: any) => ({
+            ...t,
+            items: t.transaction_items,
+          }));
+        }
+      } catch (e) {
+        console.warn("Gagal fetch transactions Supabase:", e);
+      }
+
+      // Merge with local cashier transaction map for 100% reliable offline/demo data
+      if (typeof window !== "undefined") {
+        try {
+          const localMap: Transaction[] = JSON.parse(
+            localStorage.getItem("la_cashier_transactions_map") || "[]"
+          );
+          const combined = new Map<string, Transaction>();
+          localMap.forEach((tx) => combined.set(tx.receipt_no, tx));
+          remoteTxs.forEach((tx) => {
+            const loc = combined.get(tx.receipt_no);
+            if (loc) {
+              combined.set(tx.receipt_no, {
+                ...tx,
+                cashier_name: tx.cashier_name || loc.cashier_name,
+                items: tx.items && tx.items.length > 0 ? tx.items : loc.items,
+              });
+            } else {
+              combined.set(tx.receipt_no, tx);
+            }
+          });
+          setAdminTransactions(Array.from(combined.values()));
+        } catch {
+          setAdminTransactions(remoteTxs);
+        }
+
+        try {
+          const storedLogs: CashierActivityLog[] = JSON.parse(
+            localStorage.getItem("la_cashier_activity_logs") || "[]"
+          );
+          setActivityLogs(storedLogs);
+        } catch {}
+      }
     } catch (err) {
       console.error("Gagal load admin data:", err);
     }
@@ -228,19 +318,96 @@ export default function AdminPage() {
     showNotification("Kasir berhasil dihapus.");
   };
 
-  // UBAH PIN KASIR
-  const handleUpdateCashierPin = (id: string) => {
-    const target = cashierUsers.find((c) => c.id === id);
-    if (!target) return;
-    const pinBaru = prompt(`Masukkan PIN baru untuk kasir ${target.name}:`, target.pin);
-    if (pinBaru && pinBaru.trim()) {
-      const updated = cashierUsers.map((c) =>
-        c.id === id ? { ...c, pin: pinBaru.trim() } : c
-      );
-      setCashierUsers(updated);
-      localStorage.setItem("la_cashier_users", JSON.stringify(updated));
-      showNotification(`PIN ${target.name} berhasil diubah! 🌸`);
+  // EDIT KASIR
+  const handleOpenEditCashier = (user: CashierUser) => {
+    setEditingCashier(user);
+    setEditCashierName(user.name);
+    setEditCashierPin(user.pin);
+    setEditCashierActive(user.is_active);
+  };
+
+  const handleSaveEditCashier = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingCashier || !editCashierName.trim()) return;
+
+    const updated = cashierUsers.map((c) =>
+      c.id === editingCashier.id
+        ? {
+            ...c,
+            name: editCashierName.trim(),
+            pin: editCashierPin.trim() || "1234",
+            is_active: editCashierActive,
+          }
+        : c
+    );
+
+    setCashierUsers(updated);
+    localStorage.setItem("la_cashier_users", JSON.stringify(updated));
+    setEditingCashier(null);
+    showNotification(`Data kasir ${editCashierName} berhasil diperbarui! 🌸`);
+  };
+
+  // TOGGLE STATUS KASIR (AKTIF / NONAKTIF)
+  const handleToggleActiveCashier = (id: string) => {
+    const updated = cashierUsers.map((c) =>
+      c.id === id ? { ...c, is_active: !c.is_active } : c
+    );
+    setCashierUsers(updated);
+    localStorage.setItem("la_cashier_users", JSON.stringify(updated));
+  };
+
+  // TOGGLE INTIP PASSWORD KASIR
+  const toggleShowPassword = (id: string) => {
+    setShowPasswordMap((prev) => ({
+      ...prev,
+      [id]: !prev[id],
+    }));
+  };
+
+  // HITUNG STATISTIK INPUTAN KASIR
+  const getCashierStats = (name: string) => {
+    const targetName = name.trim().toLowerCase();
+    const txs = adminTransactions.filter(
+      (t) => (t.cashier_name || "kasir").trim().toLowerCase() === targetName
+    );
+    const count = txs.length;
+    const omzet = txs.reduce((acc, t) => acc + Number(t.total_amount || 0), 0);
+    const lastTx = txs[0]?.created_at;
+    return { count, omzet, lastTx, transactions: txs };
+  };
+
+  // EXPORT RIWAYAT KASIR KE CSV
+  const handleExportCashierCSV = (cashierName: string, transactionsToExport: Transaction[]) => {
+    if (transactionsToExport.length === 0) {
+      showNotification("Tidak ada transaksi untuk diekspor!", "error");
+      return;
     }
+
+    const headers = ["Waktu", "No Struk", "Kasir", "Total Belanja (Rp)", "Metode Bayar", "Status"];
+    const rows = transactionsToExport.map((t) => [
+      t.created_at ? new Date(t.created_at).toLocaleString("id-ID") : "-",
+      t.receipt_no,
+      `"${t.cashier_name || cashierName}"`,
+      t.total_amount,
+      t.payment_method.toUpperCase(),
+      t.status,
+    ]);
+
+    const csvContent =
+      "data:text/csv;charset=utf-8,\uFEFF" +
+      [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute(
+      "download",
+      `riwayat-input-kasir-${cashierName.replace(/\s+/g, "-")}-${new Date().toISOString().slice(0, 10)}.csv`
+    );
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showNotification(`Riwayat kasir ${cashierName} berhasil diekspor! 📥`);
   };
 
   // UPLOAD FOTO QRIS
@@ -671,24 +838,29 @@ export default function AdminPage() {
 
           {/* Card 2: Kelola Staf & Kasir */}
           <div className="lg:col-span-7 bg-white rounded-3xl p-6 shadow-sm border border-pink-100 space-y-5">
-            <div>
-              <h2 className="text-sm font-extrabold text-gray-800 mb-1 flex items-center gap-2">
-                <Users className="w-4 h-4 text-rose-500" />
-                <span>Manajemen Akun Staf Kasir ({cashierUsers.length})</span>
-              </h2>
-              <p className="text-xs text-gray-500">
-                Atur nama staf kasir dan PIN masing-masing untuk login shift di layar depan.
-              </p>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-extrabold text-gray-800 mb-0.5 flex items-center gap-2">
+                  <Users className="w-4 h-4 text-rose-500" />
+                  <span>Manajemen Akun Staf Kasir ({cashierUsers.length})</span>
+                </h2>
+                <p className="text-xs text-gray-500">
+                  Atur nama kasir, password / PIN kasir, dan pantau riwayat inputan transaksi staf.
+                </p>
+              </div>
             </div>
 
             {/* Form Tambah Kasir */}
-            <form onSubmit={handleAddCashierUser} className="p-3.5 bg-pink-50/40 rounded-2xl border border-pink-100 space-y-2.5">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <form onSubmit={handleAddCashierUser} className="p-4 bg-pink-50/40 rounded-2xl border border-pink-100 space-y-3">
+              <span className="text-[11px] font-black text-rose-600 block uppercase tracking-wider">
+                + Tambah Akun Kasir Baru
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <div>
                   <label className="block text-[11px] font-bold text-gray-700 mb-1">Nama Staf / Kasir</label>
                   <input
                     type="text"
-                    placeholder="Contoh: Siti Rahma"
+                    placeholder="Contoh: Kasir Siti"
                     value={newCashierName}
                     onChange={(e) => setNewCashierName(e.target.value)}
                     className="w-full px-3 py-2 text-xs bg-white border border-pink-200 rounded-xl font-semibold focus:ring-2 focus:ring-rose-400"
@@ -696,14 +868,13 @@ export default function AdminPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold text-gray-700 mb-1">PIN Kasir (4 Digit)</label>
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">Password / PIN Kasir</label>
                   <input
-                    type="password"
-                    maxLength={6}
-                    placeholder="1234"
+                    type="text"
+                    placeholder="Contoh: 1234 atau siti123"
                     value={newCashierPin}
                     onChange={(e) => setNewCashierPin(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-white border border-pink-200 rounded-xl font-bold tracking-widest text-center focus:ring-2 focus:ring-rose-400"
+                    className="w-full px-3 py-2 text-xs bg-white border border-pink-200 rounded-xl font-bold tracking-wider text-center focus:ring-2 focus:ring-rose-400"
                     required
                   />
                 </div>
@@ -714,48 +885,497 @@ export default function AdminPage() {
                 className="w-full py-2.5 bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs rounded-xl shadow-sm transition-all btn-bounce flex items-center justify-center gap-1.5"
               >
                 <UserPlus className="w-3.5 h-3.5" />
-                <span>+ Daftarkan Kasir Baru</span>
+                <span>Simpan & Daftarkan Kasir Baru</span>
               </button>
             </form>
 
             {/* List Kasir */}
-            <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
-              {cashierUsers.map((user) => (
-                <div
-                  key={user.id}
-                  className="p-3 bg-pink-50/30 rounded-2xl border border-pink-100 flex items-center justify-between text-xs"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <span className="w-8 h-8 rounded-xl bg-white shadow-xs flex items-center justify-center text-sm border border-pink-100">
-                      👤
-                    </span>
-                    <div>
-                      <h4 className="font-bold text-gray-800">{user.name}</h4>
-                      <p className="text-[10px] text-gray-500">
-                        PIN: <span className="font-mono font-bold tracking-widest">••••</span>
-                      </p>
+            <div className="space-y-3 max-h-[480px] overflow-y-auto pr-1">
+              {cashierUsers.map((user) => {
+                const stats = getCashierStats(user.name);
+                const isPasswordVisible = !!showPasswordMap[user.id];
+
+                return (
+                  <div
+                    key={user.id}
+                    className="p-3.5 bg-pink-50/30 hover:bg-pink-50/60 rounded-2xl border border-pink-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs transition-all"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-2xl bg-white shadow-xs flex items-center justify-center text-lg border border-pink-100 flex-shrink-0">
+                        🍗
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-extrabold text-gray-800 text-sm">{user.name}</h4>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              user.is_active
+                                ? "bg-emerald-100 text-emerald-700"
+                                : "bg-gray-100 text-gray-500"
+                            }`}
+                          >
+                            {user.is_active ? "● Aktif" : "● Nonaktif"}
+                          </span>
+                        </div>
+
+                        {/* Password / PIN Viewer */}
+                        <div className="flex items-center gap-2 text-[11px] text-gray-500">
+                          <span>Password:</span>
+                          <span className="font-mono font-bold text-gray-800 bg-white px-2 py-0.5 rounded-lg border border-pink-100">
+                            {isPasswordVisible ? user.pin : "••••••"}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => toggleShowPassword(user.id)}
+                            className="text-gray-400 hover:text-rose-500 p-0.5 transition-colors"
+                            title={isPasswordVisible ? "Sembunyikan Password" : "Lihat Password"}
+                          >
+                            {isPasswordVisible ? (
+                              <EyeOff className="w-3.5 h-3.5" />
+                            ) : (
+                              <Eye className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                        </div>
+
+                        {/* Ringkasan Inputan Kasir */}
+                        <div className="flex items-center gap-2 text-[10px] font-semibold text-rose-600 pt-0.5">
+                          <span className="bg-rose-50 px-2 py-0.5 rounded-md border border-rose-100">
+                            🧾 {stats.count} Transaksi
+                          </span>
+                          <span className="bg-rose-50 px-2 py-0.5 rounded-md border border-rose-100">
+                            💰 {formatRupiah(stats.omzet)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="flex items-center gap-1.5 self-end sm:self-center">
+                      {/* Tombol Lihat Riwayat Inputan */}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCashierForHistory(user)}
+                        className="px-3 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-[11px] font-bold transition-all shadow-sm shadow-rose-200 flex items-center gap-1.5 btn-bounce"
+                      >
+                        <History className="w-3.5 h-3.5" />
+                        <span>Riwayat Inputan</span>
+                      </button>
+
+                      {/* Tombol Edit Nama & Password */}
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditCashier(user)}
+                        className="p-2 bg-white text-gray-700 border border-pink-200 hover:bg-pink-50 rounded-xl text-[11px] font-bold transition-colors"
+                        title="Edit Kasir"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+
+                      {/* Tombol Hapus */}
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteCashierUser(user.id)}
+                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-white rounded-xl transition-colors"
+                        title="Hapus Kasir"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => handleUpdateCashierPin(user.id)}
-                      className="px-2.5 py-1.5 bg-white text-gray-700 border border-pink-200 hover:bg-pink-50 rounded-xl text-[11px] font-bold transition-colors"
-                    >
-                      Ganti PIN
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteCashierUser(user.id)}
-                      className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-white rounded-xl transition-colors"
-                      title="Hapus Kasir"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+      {/* MODAL EDIT KASIR */}
+      {editingCashier && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-pop-in">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-pink-100 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-extrabold text-sm text-gray-800 flex items-center gap-2">
+                <Edit3 className="w-4 h-4 text-rose-500" />
+                <span>Edit Data Kasir</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setEditingCashier(null)}
+                className="p-1 rounded-xl text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditCashier} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  Nama Staf Kasir
+                </label>
+                <input
+                  type="text"
+                  value={editCashierName}
+                  onChange={(e) => setEditCashierName(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-bold focus:ring-2 focus:ring-rose-400"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  Password / PIN Kasir
+                </label>
+                <input
+                  type="text"
+                  value={editCashierPin}
+                  onChange={(e) => setEditCashierPin(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-bold tracking-wider text-center focus:ring-2 focus:ring-rose-400"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  Status Akun
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditCashierActive(true)}
+                    className={`py-2 rounded-xl text-xs font-bold border transition-all ${
+                      editCashierActive
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                        : "bg-white text-gray-500 border-gray-200"
+                    }`}
+                  >
+                    ● Aktif
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditCashierActive(false)}
+                    className={`py-2 rounded-xl text-xs font-bold border transition-all ${
+                      !editCashierActive
+                        ? "bg-gray-100 text-gray-800 border-gray-400"
+                        : "bg-white text-gray-500 border-gray-200"
+                    }`}
+                  >
+                    ● Nonaktif
+                  </button>
                 </div>
-              ))}
+              </div>
+
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingCashier(null)}
+                  className="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-xs rounded-xl transition-colors"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs rounded-xl shadow-sm transition-all btn-bounce"
+                >
+                  Simpan
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL RIWAYAT INPUTAN KASIR */}
+      {selectedCashierForHistory && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-gray-900/60 backdrop-blur-sm animate-pop-in">
+          <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-pink-100 overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-pink-100 flex items-center justify-between bg-gradient-to-r from-rose-50 via-pink-50 to-white">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500 text-white flex items-center justify-center shadow-sm">
+                  <History className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-black text-base text-gray-800">
+                      Riwayat Inputan: {selectedCashierForHistory.name}
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-700">
+                      Kasir Kios
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-gray-500">
+                    Semua transaksi dan aktivitas operasional yang diinput oleh staf ini.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedCashierForHistory(null)}
+                className="w-8 h-8 rounded-full bg-white hover:bg-pink-100 text-gray-500 hover:text-gray-800 flex items-center justify-center border border-pink-200 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Content (Scrollable) */}
+            <div className="p-4 sm:p-5 overflow-y-auto space-y-4 flex-1">
+              {(() => {
+                const targetName = selectedCashierForHistory.name.trim().toLowerCase();
+                const now = new Date();
+                const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+                const sevenDaysAgo = startOfToday - 7 * 24 * 60 * 60 * 1000;
+
+                // Transaksi kasir
+                const allCashierTxs = adminTransactions.filter(
+                  (t) => (t.cashier_name || "kasir").trim().toLowerCase() === targetName
+                );
+
+                // Filter by date
+                let filtered = allCashierTxs.filter((t) => {
+                  if (!t.created_at) return true;
+                  const time = new Date(t.created_at).getTime();
+                  if (historyFilterDate === "today") return time >= startOfToday;
+                  if (historyFilterDate === "7days") return time >= sevenDaysAgo;
+                  return true;
+                });
+
+                // Filter by search query
+                if (historySearchQuery.trim()) {
+                  const q = historySearchQuery.trim().toLowerCase();
+                  filtered = filtered.filter(
+                    (t) =>
+                      t.receipt_no.toLowerCase().includes(q) ||
+                      (t.items || []).some((it) => it.product_name.toLowerCase().includes(q))
+                  );
+                }
+
+                // Stats
+                const totalTxs = filtered.length;
+                const totalOmzet = filtered.reduce((acc, t) => acc + Number(t.total_amount || 0), 0);
+                const avgBasket = totalTxs > 0 ? Math.round(totalOmzet / totalTxs) : 0;
+                const cashCount = filtered.filter((t) => t.payment_method === "cash").length;
+                const qrisCount = filtered.filter((t) => t.payment_method === "qris").length;
+
+                // Activity logs
+                const cashierLogs = activityLogs.filter(
+                  (a) => a.cashier_name.trim().toLowerCase() === targetName
+                );
+
+                return (
+                  <>
+                    {/* 3 KPI Cards Ringkasan */}
+                    <div className="grid grid-cols-3 gap-2.5 sm:gap-3">
+                      <div className="bg-pink-50/50 rounded-2xl p-3 border border-pink-100 text-center">
+                        <span className="text-[10px] font-bold text-gray-500 block">Total Transaksi</span>
+                        <p className="text-lg font-black text-rose-600">{totalTxs} Nota</p>
+                        <span className="text-[9px] text-gray-400">
+                          {cashCount} Tunai • {qrisCount} QRIS
+                        </span>
+                      </div>
+                      <div className="bg-pink-50/50 rounded-2xl p-3 border border-pink-100 text-center">
+                        <span className="text-[10px] font-bold text-gray-500 block">Total Omzet Kasir</span>
+                        <p className="text-lg font-black text-gray-900">{formatRupiah(totalOmzet)}</p>
+                        <span className="text-[9px] text-gray-400">Penjualan masuk</span>
+                      </div>
+                      <div className="bg-pink-50/50 rounded-2xl p-3 border border-pink-100 text-center">
+                        <span className="text-[10px] font-bold text-gray-500 block">Rata-rata / Struk</span>
+                        <p className="text-lg font-black text-emerald-600">{formatRupiah(avgBasket)}</p>
+                        <span className="text-[9px] text-gray-400">Basket size</span>
+                      </div>
+                    </div>
+
+                    {/* Filter & Search Bar */}
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 pt-1">
+                      {/* Date Filter Buttons */}
+                      <div className="flex items-center gap-1 bg-pink-50/60 p-1 rounded-xl border border-pink-100 self-start">
+                        {[
+                          { key: "today", label: "Hari Ini" },
+                          { key: "7days", label: "7 Hari" },
+                          { key: "all", label: "Semua Waktu" },
+                        ].map((df) => (
+                          <button
+                            key={df.key}
+                            type="button"
+                            onClick={() => setHistoryFilterDate(df.key as any)}
+                            className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-all ${
+                              historyFilterDate === df.key
+                                ? "bg-rose-500 text-white shadow-xs"
+                                : "text-gray-600 hover:text-rose-600"
+                            }`}
+                          >
+                            {df.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Search Bar & Export Button */}
+                      <div className="flex items-center gap-2">
+                        <div className="relative flex-1 sm:w-48">
+                          <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                          <input
+                            type="text"
+                            placeholder="Cari nota / menu..."
+                            value={historySearchQuery}
+                            onChange={(e) => setHistorySearchQuery(e.target.value)}
+                            className="w-full pl-8 pr-2.5 py-1.5 text-xs bg-pink-50/40 border border-pink-200 rounded-xl focus:ring-1 focus:ring-rose-400"
+                          />
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleExportCashierCSV(selectedCashierForHistory.name, filtered)}
+                          className="px-2.5 py-1.5 bg-white hover:bg-pink-50 text-rose-600 border border-pink-200 rounded-xl text-xs font-bold transition-all flex items-center gap-1 shadow-xs whitespace-nowrap btn-bounce"
+                          title="Ekspor CSV"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline">CSV</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* View Tabs: Transaksi vs Log Aktivitas */}
+                    <div className="flex items-center gap-2 border-b border-pink-100 pb-2">
+                      <button
+                        type="button"
+                        onClick={() => setHistoryTab("transactions")}
+                        className={`text-xs font-bold pb-1 transition-all ${
+                          historyTab === "transactions"
+                            ? "text-rose-600 border-b-2 border-rose-500"
+                            : "text-gray-400 hover:text-gray-600"
+                        }`}
+                      >
+                        Daftar Transaksi ({filtered.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setHistoryTab("logs")}
+                        className={`text-xs font-bold pb-1 transition-all ${
+                          historyTab === "logs"
+                            ? "text-rose-600 border-b-2 border-rose-500"
+                            : "text-gray-400 hover:text-gray-600"
+                        }`}
+                      >
+                        Log Aktivitas Shift ({cashierLogs.length})
+                      </button>
+                    </div>
+
+                    {/* TAB 1: DAFTAR TRANSAKSI YANG DIINPUT KASIR */}
+                    {historyTab === "transactions" && (
+                      <div className="space-y-2.5">
+                        {filtered.map((t) => (
+                          <div
+                            key={t.id}
+                            className="p-3 bg-white rounded-2xl border border-pink-100 shadow-xs hover:border-rose-200 transition-all space-y-2"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-bold text-xs text-gray-800">
+                                  #{t.receipt_no}
+                                </span>
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                    t.payment_method === "cash"
+                                      ? "bg-amber-100 text-amber-700"
+                                      : "bg-purple-100 text-purple-700"
+                                  }`}
+                                >
+                                  {t.payment_method === "cash" ? "💵 Tunai" : "📱 QRIS"}
+                                </span>
+                              </div>
+                              <span className="font-black text-rose-600 text-sm">
+                                {formatRupiah(t.total_amount)}
+                              </span>
+                            </div>
+
+                            {/* Waktu Transaksi */}
+                            <p className="text-[10px] text-gray-400">
+                              {formatDateIndo(t.created_at)}
+                            </p>
+
+                            {/* Items Preview */}
+                            {t.items && t.items.length > 0 && (
+                              <div className="bg-pink-50/40 rounded-xl p-2 text-[11px] text-gray-600 space-y-0.5">
+                                {t.items.map((it, idx) => (
+                                  <div key={idx} className="flex justify-between">
+                                    <span>
+                                      {it.qty}x {it.product_name}
+                                    </span>
+                                    <span className="font-semibold text-gray-700">
+                                      {formatRupiah(it.subtotal)}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+
+                        {filtered.length === 0 && (
+                          <div className="text-center py-10 bg-pink-50/20 rounded-2xl border border-dashed border-pink-200 text-gray-400 text-xs">
+                            <Receipt className="w-8 h-8 mx-auto mb-2 text-pink-300" />
+                            <p className="font-bold">Belum ada inputan transaksi pada periode ini.</p>
+                            <p className="text-[11px] text-gray-400 mt-0.5">
+                              Transaksi yang diinput oleh kasir ini di layar POS akan otomatis tercatat di sini.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* TAB 2: LOG AKTIVITAS SHIFT */}
+                    {historyTab === "logs" && (
+                      <div className="space-y-2">
+                        {cashierLogs.map((log) => (
+                          <div
+                            key={log.id}
+                            className="p-2.5 bg-white rounded-xl border border-pink-100 flex items-center justify-between text-xs"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm">
+                                {log.action === "login"
+                                  ? "🟢"
+                                  : log.action === "sale"
+                                  ? "🛒"
+                                  : "📦"}
+                              </span>
+                              <div>
+                                <p className="font-bold text-gray-800">{log.details}</p>
+                                <p className="text-[10px] text-gray-400">
+                                  {formatDateIndo(log.created_at)}
+                                </p>
+                              </div>
+                            </div>
+                            {log.amount && (
+                              <span className="font-bold text-rose-600 text-xs">
+                                {formatRupiah(log.amount)}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+
+                        {cashierLogs.length === 0 && (
+                          <div className="text-center py-8 text-gray-400 text-xs">
+                            Belum ada catatan aktivitas shift tercatat.
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3.5 border-t border-pink-100 bg-pink-50/30 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setSelectedCashierForHistory(null)}
+                className="px-5 py-2 bg-gray-800 hover:bg-black text-white text-xs font-bold rounded-xl transition-all btn-bounce"
+              >
+                Tutup Riwayat
+              </button>
             </div>
           </div>
         </div>
