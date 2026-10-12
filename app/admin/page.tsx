@@ -19,7 +19,10 @@ import {
   KeyRound,
   Users,
   UserPlus,
-  ShieldCheck
+  ShieldCheck,
+  Upload,
+  Image as ImageIcon,
+  Camera
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { Product, ProductAddon, InventoryItem, StoreSettings, CashierUser } from "@/types";
@@ -238,6 +241,25 @@ export default function AdminPage() {
       localStorage.setItem("la_cashier_users", JSON.stringify(updated));
       showNotification(`PIN ${target.name} berhasil diubah! 🌸`);
     }
+  };
+
+  // UPLOAD FOTO QRIS
+  const handleQrisFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 3 * 1024 * 1024) {
+      showNotification("Ukuran foto maksimal 3MB!", "error");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64 = reader.result as string;
+      setSettings((prev) => ({ ...prev, qris_static_image_url: base64 }));
+      showNotification("Foto barcode QRIS berhasil dipilih! Klik Simpan di bawah untuk mengaktifkan.");
+    };
+    reader.readAsDataURL(file);
   };
 
   // Handle PIN Unlock
@@ -1302,30 +1324,57 @@ export default function AdminPage() {
 
             {/* Static QRIS Settings */}
             {settings.qris_mode === "static" && (
-              <div className="p-4 bg-pink-50/40 rounded-2xl border border-pink-100 space-y-3">
-                <label className="block text-xs font-bold text-gray-700">
-                  URL Gambar Barcode QRIS Toko
-                </label>
-                <input
-                  type="url"
-                  placeholder="https://..."
-                  value={settings.qris_static_image_url || ""}
-                  onChange={(e) =>
-                    setSettings({ ...settings, qris_static_image_url: e.target.value })
-                  }
-                  className="w-full px-3.5 py-2.5 text-xs bg-white border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400"
-                />
-                <p className="text-[11px] text-gray-500">
-                  Masukkan link gambar barcode QRIS statis kios LA Fried Chicken dari LinkAja/BCA/ShopeePay/Gopay.
-                </p>
+              <div className="p-4 bg-pink-50/40 rounded-2xl border border-pink-100 space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">
+                    Upload Foto Barcode QRIS Toko
+                  </label>
+                  <p className="text-[11px] text-gray-500 mb-3">
+                    Pilih gambar QRIS (BCA, LinkAja, GoPay, ShopeePay, dll.) langsung dari galeri atau kamera HP Anda.
+                  </p>
+                </div>
 
-                {settings.qris_static_image_url && (
-                  <div className="w-36 h-36 mx-auto bg-white p-2 rounded-xl border border-pink-200 mt-2">
-                    <img
-                      src={settings.qris_static_image_url}
-                      alt="Preview QRIS"
-                      className="w-full h-full object-contain rounded-lg"
-                    />
+                {/* Upload Button Box */}
+                <label className="border-2 border-dashed border-pink-300 hover:border-rose-400 bg-white rounded-2xl p-5 flex flex-col items-center justify-center cursor-pointer transition-all hover:bg-pink-50/40 group text-center">
+                  <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-500 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+                    <Upload className="w-6 h-6" />
+                  </div>
+                  <span className="font-bold text-xs text-rose-600">
+                    Pilih File Foto QRIS (PNG / JPG / JPEG)
+                  </span>
+                  <span className="text-[10px] text-gray-400 mt-0.5">
+                    Maksimal 3MB &bull; Langsung tersimpan
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleQrisFileUpload}
+                    className="hidden"
+                  />
+                </label>
+
+                {/* Preview QRIS Image */}
+                {settings.qris_static_image_url ? (
+                  <div className="p-3 bg-white rounded-2xl border border-pink-200 text-center">
+                    <p className="text-[11px] font-bold text-gray-700 mb-2">Pratinjau Barcode QRIS Aktif:</p>
+                    <div className="w-44 h-44 mx-auto bg-pink-50/50 p-2 rounded-xl border border-pink-100 flex items-center justify-center mb-2">
+                      <img
+                        src={settings.qris_static_image_url}
+                        alt="Preview QRIS"
+                        className="w-full h-full object-contain rounded-lg"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSettings((prev) => ({ ...prev, qris_static_image_url: "" }))}
+                      className="px-3 py-1.5 text-[11px] font-bold text-red-600 hover:bg-red-50 rounded-xl transition-colors"
+                    >
+                      Hapus Foto QRIS
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-[11px] text-amber-700 font-medium">
+                    ⚠️ Belum ada foto barcode QRIS yang diunggah. Silakan upload gambar barcode kios Anda.
                   </div>
                 )}
               </div>

@@ -146,6 +146,7 @@ export default function Navbar() {
                   <Link
                     key={item.href}
                     href={item.href}
+                    prefetch={true}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
                       isActive
                         ? "bg-rose-500 text-white shadow-sm shadow-rose-300"
@@ -171,6 +172,7 @@ export default function Navbar() {
             <Link
               key={item.href}
               href={item.href}
+              prefetch={true}
               className={`flex flex-col items-center justify-center flex-1 py-1 rounded-xl transition-all btn-bounce ${
                 isActive
                   ? "text-rose-500 font-bold"
