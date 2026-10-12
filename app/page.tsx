@@ -382,6 +382,7 @@ export default function POSPage() {
       <InitialDrawerModal
         isOpen={!isCashierModalOpen && isDrawerOpenModal}
         onSuccess={() => setIsDrawerOpenModal(false)}
+        onClose={() => setIsDrawerOpenModal(false)}
       />
 
       {/* Celebration FX Modal */}

@@ -109,3 +109,11 @@ export interface CashierSession {
   loggedInAt: string;
 }
 
+export interface CashierUser {
+  id: string;
+  name: string;
+  pin: string;
+  role: 'cashier' | 'admin';
+  is_active: boolean;
+}
+

@@ -16,10 +16,13 @@ import {
   Layers, 
   AlertCircle,
   Sparkles,
-  KeyRound
+  KeyRound,
+  Users,
+  UserPlus,
+  ShieldCheck
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
-import { Product, ProductAddon, InventoryItem, StoreSettings } from "@/types";
+import { Product, ProductAddon, InventoryItem, StoreSettings, CashierUser } from "@/types";
 import { formatRupiah } from "@/lib/utils";
 
 export default function AdminPage() {
@@ -27,8 +30,8 @@ export default function AdminPage() {
   const [pinInput, setPinInput] = useState("");
   const [pinError, setPinError] = useState("");
   
-  // Active Tab: 'profile' | 'products' | 'addons' | 'inventory' | 'qris'
-  const [activeTab, setActiveTab] = useState<"profile" | "products" | "addons" | "inventory" | "qris">("profile");
+  // Active Tab: 'users' | 'profile' | 'products' | 'addons' | 'inventory' | 'qris'
+  const [activeTab, setActiveTab] = useState<"users" | "profile" | "products" | "addons" | "inventory" | "qris">("users");
 
   // State Data
   const [settings, setSettings] = useState<StoreSettings>({
@@ -44,6 +47,14 @@ export default function AdminPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [addons, setAddons] = useState<ProductAddon[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+
+  // User & PIN Management State
+  const [cashierUsers, setCashierUsers] = useState<CashierUser[]>([]);
+  const [newCashierName, setNewCashierName] = useState("");
+  const [newCashierPin, setNewCashierPin] = useState("1234");
+  const [adminOldPinInput, setAdminOldPinInput] = useState("");
+  const [adminNewPinInput, setAdminNewPinInput] = useState("");
+  const [adminConfirmPinInput, setAdminConfirmPinInput] = useState("");
 
   // Form states
   // Product Form
@@ -117,6 +128,25 @@ export default function AdminPage() {
         .select("*")
         .order("name", { ascending: true });
       if (iData) setInventoryItems(iData);
+
+      // 5. Cashier Users
+      if (typeof window !== "undefined") {
+        const storedUsers = localStorage.getItem("la_cashier_users");
+        if (storedUsers) {
+          try {
+            setCashierUsers(JSON.parse(storedUsers));
+          } catch {}
+        } else {
+          const defaultUsers: CashierUser[] = [
+            { id: "1", name: "Kasir 1", pin: "1234", role: "cashier", is_active: true },
+            { id: "2", name: "Kasir 2", pin: "1234", role: "cashier", is_active: true },
+            { id: "3", name: "Mbak Siti", pin: "1234", role: "cashier", is_active: true },
+            { id: "4", name: "Owner", pin: "1234", role: "admin", is_active: true },
+          ];
+          setCashierUsers(defaultUsers);
+          localStorage.setItem("la_cashier_users", JSON.stringify(defaultUsers));
+        }
+      }
     } catch (err) {
       console.error("Gagal load admin data:", err);
     }
@@ -125,6 +155,90 @@ export default function AdminPage() {
   useEffect(() => {
     fetchAllData();
   }, []);
+
+  // UPDATE ADMIN PIN
+  const handleUpdateAdminPin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const currentValidPin = settings.admin_pin || "1234";
+    if (adminOldPinInput !== currentValidPin) {
+      showNotification("PIN Admin Lama salah!", "error");
+      return;
+    }
+    if (adminNewPinInput.length < 4) {
+      showNotification("PIN Admin minimal 4 digit!", "error");
+      return;
+    }
+    if (adminNewPinInput !== adminConfirmPinInput) {
+      showNotification("Konfirmasi PIN baru tidak cocok!", "error");
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from("store_settings")
+        .upsert({
+          id: settings.id || "00000000-0000-0000-0000-000000000001",
+          admin_pin: adminNewPinInput,
+          updated_at: new Date().toISOString(),
+        });
+
+      if (error) throw error;
+      setSettings((prev) => ({ ...prev, admin_pin: adminNewPinInput }));
+      setAdminOldPinInput("");
+      setAdminNewPinInput("");
+      setAdminConfirmPinInput("");
+      showNotification("PIN Admin berhasil diubah! 🔐");
+    } catch (err: any) {
+      showNotification(err.message || "Gagal mengubah PIN", "error");
+    }
+  };
+
+  // TAMBAH KASIR
+  const handleAddCashierUser = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCashierName.trim()) return;
+
+    const newUser: CashierUser = {
+      id: "cashier-" + Date.now(),
+      name: newCashierName.trim(),
+      pin: newCashierPin.trim() || "1234",
+      role: "cashier",
+      is_active: true,
+    };
+
+    const updated = [...cashierUsers, newUser];
+    setCashierUsers(updated);
+    localStorage.setItem("la_cashier_users", JSON.stringify(updated));
+    setNewCashierName("");
+    setNewCashierPin("1234");
+    showNotification(`Kasir ${newUser.name} berhasil didaftarkan! 🌸`);
+  };
+
+  // HAPUS KASIR
+  const handleDeleteCashierUser = (id: string) => {
+    const target = cashierUsers.find((c) => c.id === id);
+    if (!confirm(`Hapus kasir ${target?.name || ""}?`)) return;
+
+    const updated = cashierUsers.filter((c) => c.id !== id);
+    setCashierUsers(updated);
+    localStorage.setItem("la_cashier_users", JSON.stringify(updated));
+    showNotification("Kasir berhasil dihapus.");
+  };
+
+  // UBAH PIN KASIR
+  const handleUpdateCashierPin = (id: string) => {
+    const target = cashierUsers.find((c) => c.id === id);
+    if (!target) return;
+    const pinBaru = prompt(`Masukkan PIN baru untuk kasir ${target.name}:`, target.pin);
+    if (pinBaru && pinBaru.trim()) {
+      const updated = cashierUsers.map((c) =>
+        c.id === id ? { ...c, pin: pinBaru.trim() } : c
+      );
+      setCashierUsers(updated);
+      localStorage.setItem("la_cashier_users", JSON.stringify(updated));
+      showNotification(`PIN ${target.name} berhasil diubah! 🌸`);
+    }
+  };
 
   // Handle PIN Unlock
   const handleVerifyPin = () => {
@@ -438,6 +552,7 @@ export default function AdminPage() {
       {/* Tabs */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
         {[
+          { key: "users", label: "Kelola User & PIN", icon: Users },
           { key: "profile", label: "Profil Toko", icon: Store },
           { key: "products", label: "Menu & Produk", icon: ShoppingBag },
           { key: "addons", label: "Varian Saus", icon: Layers },
@@ -463,7 +578,168 @@ export default function AdminPage() {
         })}
       </div>
 
-      {/* TAB 1: PROFIL TOKO & PIN */}
+      {/* TAB 0: KELOLA USER & PIN */}
+      {activeTab === "users" && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+          {/* Card 1: Ganti Password / PIN Admin (Owner) */}
+          <div className="lg:col-span-5 bg-white rounded-3xl p-6 shadow-sm border border-pink-100">
+            <h2 className="text-sm font-extrabold text-gray-800 mb-1 flex items-center gap-2">
+              <KeyRound className="w-4 h-4 text-rose-500" />
+              <span>Ganti Password / PIN Admin (Owner)</span>
+            </h2>
+            <p className="text-xs text-gray-500 mb-4">
+              Ubah PIN utama untuk mengunci dan mengakses halaman Admin ini.
+            </p>
+
+            <form onSubmit={handleUpdateAdminPin} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  PIN Admin Lama
+                </label>
+                <input
+                  type="password"
+                  maxLength={6}
+                  value={adminOldPinInput}
+                  onChange={(e) => setAdminOldPinInput(e.target.value)}
+                  placeholder="Ketik PIN saat ini (default: 1234)"
+                  className="w-full px-3.5 py-2.5 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-bold tracking-widest text-center focus:ring-2 focus:ring-rose-400"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  PIN Admin Baru (Minimal 4 Angka)
+                </label>
+                <input
+                  type="password"
+                  maxLength={6}
+                  value={adminNewPinInput}
+                  onChange={(e) => setAdminNewPinInput(e.target.value)}
+                  placeholder="Ketik PIN baru..."
+                  className="w-full px-3.5 py-2.5 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-bold tracking-widest text-center focus:ring-2 focus:ring-rose-400"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  Ulangi Konfirmasi PIN Baru
+                </label>
+                <input
+                  type="password"
+                  maxLength={6}
+                  value={adminConfirmPinInput}
+                  onChange={(e) => setAdminConfirmPinInput(e.target.value)}
+                  placeholder="Ketik ulang PIN baru..."
+                  className="w-full px-3.5 py-2.5 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-bold tracking-widest text-center focus:ring-2 focus:ring-rose-400"
+                  required
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-3.5 bg-rose-500 text-white font-bold text-xs rounded-2xl shadow-md shadow-rose-200 hover:bg-rose-600 active:scale-95 transition-all flex items-center justify-center gap-1.5 btn-bounce min-h-[48px]"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                <span>Simpan PIN Admin Baru 🔐</span>
+              </button>
+            </form>
+          </div>
+
+          {/* Card 2: Kelola Staf & Kasir */}
+          <div className="lg:col-span-7 bg-white rounded-3xl p-6 shadow-sm border border-pink-100 space-y-5">
+            <div>
+              <h2 className="text-sm font-extrabold text-gray-800 mb-1 flex items-center gap-2">
+                <Users className="w-4 h-4 text-rose-500" />
+                <span>Manajemen Akun Staf Kasir ({cashierUsers.length})</span>
+              </h2>
+              <p className="text-xs text-gray-500">
+                Atur nama staf kasir dan PIN masing-masing untuk login shift di layar depan.
+              </p>
+            </div>
+
+            {/* Form Tambah Kasir */}
+            <form onSubmit={handleAddCashierUser} className="p-3.5 bg-pink-50/40 rounded-2xl border border-pink-100 space-y-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">Nama Staf / Kasir</label>
+                  <input
+                    type="text"
+                    placeholder="Contoh: Siti Rahma"
+                    value={newCashierName}
+                    onChange={(e) => setNewCashierName(e.target.value)}
+                    className="w-full px-3 py-2 text-xs bg-white border border-pink-200 rounded-xl font-semibold focus:ring-2 focus:ring-rose-400"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">PIN Kasir (4 Digit)</label>
+                  <input
+                    type="password"
+                    maxLength={6}
+                    placeholder="1234"
+                    value={newCashierPin}
+                    onChange={(e) => setNewCashierPin(e.target.value)}
+                    className="w-full px-3 py-2 text-xs bg-white border border-pink-200 rounded-xl font-bold tracking-widest text-center focus:ring-2 focus:ring-rose-400"
+                    required
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-2.5 bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs rounded-xl shadow-sm transition-all btn-bounce flex items-center justify-center gap-1.5"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                <span>+ Daftarkan Kasir Baru</span>
+              </button>
+            </form>
+
+            {/* List Kasir */}
+            <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+              {cashierUsers.map((user) => (
+                <div
+                  key={user.id}
+                  className="p-3 bg-pink-50/30 rounded-2xl border border-pink-100 flex items-center justify-between text-xs"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="w-8 h-8 rounded-xl bg-white shadow-xs flex items-center justify-center text-sm border border-pink-100">
+                      👤
+                    </span>
+                    <div>
+                      <h4 className="font-bold text-gray-800">{user.name}</h4>
+                      <p className="text-[10px] text-gray-500">
+                        PIN: <span className="font-mono font-bold tracking-widest">••••</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateCashierPin(user.id)}
+                      className="px-2.5 py-1.5 bg-white text-gray-700 border border-pink-200 hover:bg-pink-50 rounded-xl text-[11px] font-bold transition-colors"
+                    >
+                      Ganti PIN
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteCashierUser(user.id)}
+                      className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-white rounded-xl transition-colors"
+                      title="Hapus Kasir"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 1: PROFIL TOKO */}
       {activeTab === "profile" && (
         <div className="bg-white rounded-3xl p-6 shadow-sm border border-pink-100 max-w-2xl">
           <h2 className="text-base font-extrabold text-gray-800 mb-4 flex items-center gap-2">

@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { UserCheck, Sparkles, AlertCircle, ArrowRight, ShieldCheck } from "lucide-react";
-import { CashierSession } from "@/types";
+import { CashierSession, CashierUser } from "@/types";
 
 interface CashierLoginModalProps {
   isOpen: boolean;
@@ -18,10 +18,34 @@ export default function CashierLoginModal({
   const [cashierName, setCashierName] = useState("Kasir 1");
   const [pin, setPin] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
+  const [cashierList, setCashierList] = useState<CashierUser[]>([]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("la_cashier_users");
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setCashierList(parsed.filter((u: CashierUser) => u.is_active));
+            setCashierName(parsed[0].name);
+            return;
+          }
+        } catch {}
+      }
+      const defaultUsers: CashierUser[] = [
+        { id: "1", name: "Kasir 1", pin: "1234", role: "cashier", is_active: true },
+        { id: "2", name: "Kasir 2", pin: "1234", role: "cashier", is_active: true },
+        { id: "3", name: "Mbak Siti", pin: "1234", role: "cashier", is_active: true },
+        { id: "4", name: "Owner", pin: "1234", role: "admin", is_active: true },
+      ];
+      setCashierList(defaultUsers);
+      setCashierName("Kasir 1");
+      localStorage.setItem("la_cashier_users", JSON.stringify(defaultUsers));
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
-
-  const presets = ["Kasir 1", "Kasir 2", "Mbak Siti", "Owner"];
 
   const handleLogin = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -30,9 +54,14 @@ export default function CashierLoginModal({
       return;
     }
 
-    // Default pin is 1234 or configured store PIN
-    if (pin !== validPin && pin !== "1234") {
-      setErrorMsg("PIN Kasir salah! (Default: 1234)");
+    // Match cashier PIN or store default PIN
+    const matching = cashierList.find(
+      (u) => u.name.trim().toLowerCase() === cashierName.trim().toLowerCase()
+    );
+    const targetPin = matching ? matching.pin : validPin;
+
+    if (pin !== targetPin && pin !== validPin && pin !== "1234") {
+      setErrorMsg(`PIN salah untuk kasir ${cashierName}!`);
       return;
     }
 
@@ -73,18 +102,18 @@ export default function CashierLoginModal({
               Pilih Nama Kasir
             </label>
             <div className="grid grid-cols-2 gap-1.5 mb-2">
-              {presets.map((p) => (
+              {cashierList.map((u) => (
                 <button
-                  key={p}
+                  key={u.id}
                   type="button"
-                  onClick={() => setCashierName(p)}
+                  onClick={() => setCashierName(u.name)}
                   className={`py-2 px-2 text-xs font-bold rounded-xl border transition-all btn-bounce ${
-                    cashierName === p
+                    cashierName === u.name
                       ? "bg-rose-500 text-white border-rose-500 shadow-sm shadow-rose-200"
                       : "bg-pink-50/50 text-gray-700 border-pink-200 hover:bg-pink-100/50"
                   }`}
                 >
-                  {p}
+                  {u.name}
                 </button>
               ))}
             </div>

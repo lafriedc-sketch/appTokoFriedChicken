@@ -1,16 +1,17 @@
 "use client";
 
 import React, { useState } from "react";
-import { Wallet, Sparkles, CheckCircle2 } from "lucide-react";
+import { Wallet, Sparkles, CheckCircle2, X } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { formatRupiah } from "@/lib/utils";
 
 interface InitialDrawerModalProps {
   isOpen: boolean;
   onSuccess: () => void;
+  onClose?: () => void;
 }
 
-export default function InitialDrawerModal({ isOpen, onSuccess }: InitialDrawerModalProps) {
+export default function InitialDrawerModal({ isOpen, onSuccess, onClose }: InitialDrawerModalProps) {
   const [initialCash, setInitialCash] = useState<number>(200000);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -81,6 +82,18 @@ export default function InitialDrawerModal({ isOpen, onSuccess }: InitialDrawerM
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-pop-in">
       <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-pink-100 text-center relative overflow-hidden">
+        {/* Close button if optional */}
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute top-4 right-4 p-2 rounded-full text-gray-400 hover:text-gray-700 hover:bg-pink-50 transition-colors z-20"
+            title="Lewati modal kas laci"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        )}
+
         {/* Cute decorative background floral accent */}
         <div className="absolute -top-10 -right-10 w-32 h-32 bg-pink-100 rounded-full blur-2xl pointer-events-none" />
         <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-rose-100 rounded-full blur-2xl pointer-events-none" />
@@ -187,6 +200,17 @@ export default function InitialDrawerModal({ isOpen, onSuccess }: InitialDrawerM
             </>
           )}
         </button>
+
+        {/* Skip button */}
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full mt-2.5 py-2.5 bg-transparent text-gray-500 hover:text-rose-600 font-semibold text-xs rounded-xl hover:bg-pink-50/50 transition-colors"
+          >
+            Lewati Modal Laci (Buka Menu Saja)
+          </button>
+        )}
       </div>
     </div>
   );
