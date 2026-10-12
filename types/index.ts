@@ -1,4 +1,4 @@
-export type ProductCategory = 'Ayam' | 'Makanan' | 'Minuman' | 'Paket' | 'Lainnya';
+export type ProductCategory = 'Ayam' | 'Paket' | 'Promo' | 'Makanan' | 'Minuman' | 'Lainnya';
 
 export interface Product {
   id: string;

@@ -31,9 +31,12 @@ const DEFAULT_PRODUCTS: Product[] = [
   { id: "2", name: "Paha Atas", category: "Ayam", price: 11000, is_available: true, icon_or_image_url: "🍗" },
   { id: "3", name: "Paha Bawah", category: "Ayam", price: 9000, is_available: true, icon_or_image_url: "🍗" },
   { id: "4", name: "Sayap", category: "Ayam", price: 9000, is_available: true, icon_or_image_url: "🍗" },
-  { id: "5", name: "Nasi", category: "Makanan", price: 4000, is_available: true, icon_or_image_url: "🍚" },
-  { id: "6", name: "Es Teh", category: "Minuman", price: 3000, is_available: true, icon_or_image_url: "🥤" },
-  { id: "7", name: "Paket Nasi + Dada", category: "Paket", price: 14000, is_available: true, icon_or_image_url: "🍱" },
+  { id: "5", name: "Paket Nasi + Dada", category: "Paket", price: 14000, is_available: true, icon_or_image_url: "🍱" },
+  { id: "6", name: "Paket Hemat Paha Bawah", category: "Paket", price: 12000, is_available: true, icon_or_image_url: "🍱" },
+  { id: "7", name: "Promo Beli 2 Gratis 1 Sayap", category: "Promo", price: 18000, is_available: true, icon_or_image_url: "🔥" },
+  { id: "8", name: "Promo Combo Serbu (2 Ayam + Nasi + Es Teh)", category: "Promo", price: 25000, is_available: true, icon_or_image_url: "🎉" },
+  { id: "9", name: "Nasi", category: "Makanan", price: 4000, is_available: true, icon_or_image_url: "🍚" },
+  { id: "10", name: "Es Teh", category: "Minuman", price: 3000, is_available: true, icon_or_image_url: "🥤" },
 ];
 
 const DEFAULT_ADDONS: ProductAddon[] = [
@@ -151,10 +154,26 @@ export default function POSPage() {
     fetchData();
   }, []);
 
-  // Filter Categories
+  // Filter Categories: Urutkan agar 'Promo' selalu berada persis disamping 'Paket'
   const categories = useMemo(() => {
-    const cats = Array.from(new Set(products.map((p) => p.category)));
-    return ["Semua", ...cats];
+    const desiredOrder = ["Ayam", "Paket", "Promo", "Makanan", "Minuman"];
+    const existingCats = Array.from(new Set(products.map((p) => p.category)));
+
+    const result: string[] = [];
+    desiredOrder.forEach((c) => {
+      // Selalu sertakan Paket & Promo atau kategori yang memiliki produk
+      if (existingCats.includes(c) || c === "Paket" || c === "Promo") {
+        result.push(c);
+      }
+    });
+
+    existingCats.forEach((c) => {
+      if (!result.includes(c)) {
+        result.push(c);
+      }
+    });
+
+    return ["Semua", ...result];
   }, [products]);
 
   const filteredProducts = useMemo(() => {
@@ -181,8 +200,11 @@ export default function POSPage() {
   const handleProductClick = (product: Product) => {
     if (!product.is_available) return;
 
-    // If there are addons available and item is chicken or package, offer add-on dialog
-    if (addons.length > 0 && (product.category === "Ayam" || product.category === "Paket")) {
+    // If there are addons available and item is chicken, package, or promo, offer add-on dialog
+    if (
+      addons.length > 0 &&
+      (product.category === "Ayam" || product.category === "Paket" || product.category === "Promo")
+    ) {
       setSelectedProductForAddon(product);
       setTempSelectedAddons([]);
     } else {
@@ -522,19 +544,38 @@ export default function POSPage() {
 
         {/* Category Pills (Touch Scrollable) */}
         <div className="flex items-center gap-2 overflow-x-auto pt-3 pb-1 no-scrollbar">
-          {categories.map((cat) => (
-            <button
-              key={cat}
-              onClick={() => setActiveCategory(cat)}
-              className={`px-4 py-2 rounded-2xl text-xs font-bold whitespace-nowrap transition-all btn-bounce ${
-                activeCategory === cat
-                  ? "bg-rose-500 text-white shadow-md shadow-rose-200"
-                  : "bg-pink-50/80 text-gray-700 hover:bg-pink-100"
-              }`}
-            >
-              {cat}
-            </button>
-          ))}
+          {categories.map((cat) => {
+            const isPromo = cat === "Promo";
+            const isActive = activeCategory === cat;
+
+            return (
+              <button
+                key={cat}
+                onClick={() => setActiveCategory(cat)}
+                className={`px-4 py-2 rounded-2xl text-xs font-bold whitespace-nowrap transition-all btn-bounce flex items-center gap-1.5 ${
+                  isActive
+                    ? isPromo
+                      ? "bg-gradient-to-r from-red-500 to-rose-600 text-white shadow-md shadow-rose-300 ring-2 ring-red-300"
+                      : "bg-rose-500 text-white shadow-md shadow-rose-200"
+                    : isPromo
+                    ? "bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 font-extrabold"
+                    : "bg-pink-50/80 text-gray-700 hover:bg-pink-100"
+                }`}
+              >
+                {isPromo && <span>🔥</span>}
+                <span>{cat}</span>
+                {isPromo && (
+                  <span
+                    className={`px-1.5 py-0.2 text-[9px] font-black uppercase rounded-full ${
+                      isActive ? "bg-white text-red-600" : "bg-red-500 text-white"
+                    }`}
+                  >
+                    HOT
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -567,8 +608,14 @@ export default function POSPage() {
                   <h3 className="font-extrabold text-sm text-gray-800 leading-tight mb-1">
                     {p.name}
                   </h3>
-                  <span className="text-[10px] font-medium text-rose-500 bg-rose-50 px-2 py-0.5 rounded-full inline-block mb-2">
-                    {p.category}
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-block mb-2 ${
+                      p.category === "Promo"
+                        ? "bg-red-100 text-red-600 border border-red-200"
+                        : "text-rose-500 bg-rose-50"
+                    }`}
+                  >
+                    {p.category === "Promo" ? "🔥 Promo" : p.category}
                   </span>
                 </div>
 

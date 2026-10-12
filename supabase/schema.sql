@@ -177,9 +177,12 @@ INSERT INTO products (name, category, price, is_available, icon_or_image_url) VA
 ('Paha Atas', 'Ayam', 11000, true, '🍗'),
 ('Paha Bawah', 'Ayam', 9000, true, '🍗'),
 ('Sayap', 'Ayam', 9000, true, '🍗'),
+('Paket Nasi + Dada', 'Paket', 14000, true, '🍱'),
+('Paket Hemat Paha Bawah', 'Paket', 12000, true, '🍱'),
+('Promo Beli 2 Gratis 1 Sayap', 'Promo', 18000, true, '🔥'),
+('Promo Combo Serbu (2 Ayam + Nasi + Es Teh)', 'Promo', 25000, true, '🎉'),
 ('Nasi', 'Makanan', 4000, true, '🍚'),
-('Es Teh', 'Minuman', 3000, true, '🥤'),
-('Paket Nasi + Dada', 'Paket', 14000, true, '🍱')
+('Es Teh', 'Minuman', 3000, true, '🥤')
 ON CONFLICT DO NOTHING;
 
 -- Default Product Addons

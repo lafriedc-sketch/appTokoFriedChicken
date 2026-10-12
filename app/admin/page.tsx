@@ -1517,9 +1517,10 @@ export default function AdminPage() {
                     className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400"
                   >
                     <option value="Ayam">Ayam</option>
+                    <option value="Paket">Paket</option>
+                    <option value="Promo">Promo 🔥</option>
                     <option value="Makanan">Makanan</option>
                     <option value="Minuman">Minuman</option>
-                    <option value="Paket">Paket</option>
                     <option value="Lainnya">Lainnya</option>
                   </select>
                 </div>
@@ -1588,8 +1589,14 @@ export default function AdminPage() {
                     <div>
                       <h4 className="font-bold text-xs text-gray-800">{p.name}</h4>
                       <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-[10px] text-gray-500 bg-white px-2 py-0.5 rounded-full border border-pink-100">
-                          {p.category}
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                            p.category === "Promo"
+                              ? "bg-red-50 text-red-600 border-red-200"
+                              : "bg-white text-gray-500 border-pink-100"
+                          }`}
+                        >
+                          {p.category === "Promo" ? "🔥 Promo" : p.category}
                         </span>
                         <span className="text-xs font-black text-rose-600">
                           {formatRupiah(p.price)}
