@@ -14,8 +14,16 @@ CREATE TABLE IF NOT EXISTS products (
     price NUMERIC(12, 2) NOT NULL DEFAULT 0,
     is_available BOOLEAN NOT NULL DEFAULT true,
     icon_or_image_url TEXT,
+    original_price NUMERIC(12, 2),
+    discount_percent NUMERIC(5, 2),
+    promo_items JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
+
+-- Migration safety for existing products table
+ALTER TABLE products ADD COLUMN IF NOT EXISTS original_price NUMERIC(12, 2);
+ALTER TABLE products ADD COLUMN IF NOT EXISTS discount_percent NUMERIC(5, 2);
+ALTER TABLE products ADD COLUMN IF NOT EXISTS promo_items JSONB;
 
 -- Tabel Varian / Add-on Produk (Saus & Pelengkap)
 CREATE TABLE IF NOT EXISTS product_addons (

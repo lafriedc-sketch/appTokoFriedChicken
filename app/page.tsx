@@ -33,8 +33,34 @@ const DEFAULT_PRODUCTS: Product[] = [
   { id: "4", name: "Sayap", category: "Ayam", price: 9000, is_available: true, icon_or_image_url: "🍗" },
   { id: "5", name: "Paket Nasi + Dada", category: "Paket", price: 14000, is_available: true, icon_or_image_url: "🍱" },
   { id: "6", name: "Paket Hemat Paha Bawah", category: "Paket", price: 12000, is_available: true, icon_or_image_url: "🍱" },
-  { id: "7", name: "Promo Beli 2 Gratis 1 Sayap", category: "Promo", price: 18000, is_available: true, icon_or_image_url: "🔥" },
-  { id: "8", name: "Promo Combo Serbu (2 Ayam + Nasi + Es Teh)", category: "Promo", price: 25000, is_available: true, icon_or_image_url: "🎉" },
+  { 
+    id: "7", 
+    name: "Promo Beli 2 Gratis 1 Sayap", 
+    category: "Promo", 
+    price: 18000, 
+    original_price: 27000,
+    discount_percent: 33,
+    promo_items: [
+      { productId: "4", name: "Sayap", qty: 3, unit_price: 9000 }
+    ],
+    is_available: true, 
+    icon_or_image_url: "🔥" 
+  },
+  { 
+    id: "8", 
+    name: "Promo Combo Serbu (Dada + Nasi + Es Teh)", 
+    category: "Promo", 
+    price: 14400, 
+    original_price: 18000,
+    discount_percent: 20,
+    promo_items: [
+      { productId: "1", name: "Dada", qty: 1, unit_price: 11000 },
+      { productId: "9", name: "Nasi", qty: 1, unit_price: 4000 },
+      { productId: "10", name: "Es Teh", qty: 1, unit_price: 3000 },
+    ],
+    is_available: true, 
+    icon_or_image_url: "🎉" 
+  },
   { id: "9", name: "Nasi", category: "Makanan", price: 4000, is_available: true, icon_or_image_url: "🍚" },
   { id: "10", name: "Es Teh", category: "Minuman", price: 3000, is_available: true, icon_or_image_url: "🥤" },
 ];
@@ -116,7 +142,25 @@ export default function POSPage() {
         .order("created_at", { ascending: true });
 
       if (!pErr && pData && pData.length > 0) {
-        setProducts(pData);
+        let merged = pData;
+        if (typeof window !== "undefined") {
+          try {
+            const extras = JSON.parse(localStorage.getItem("la_promo_products_extras") || "{}");
+            merged = pData.map((p) => {
+              const extra = extras[p.id];
+              if (extra) {
+                return {
+                  ...p,
+                  original_price: p.original_price ?? extra.original_price,
+                  discount_percent: p.discount_percent ?? extra.discount_percent,
+                  promo_items: p.promo_items ?? extra.promo_items,
+                };
+              }
+              return p;
+            });
+          } catch {}
+        }
+        setProducts(merged);
       } else {
         setProducts(DEFAULT_PRODUCTS);
       }
@@ -593,12 +637,17 @@ export default function POSPage() {
                     : "opacity-60 cursor-not-allowed border-gray-200 bg-gray-50"
                 }`}
               >
-                {/* Unavailable Badge */}
-                {!p.is_available && (
-                  <span className="absolute top-2 right-2 text-[10px] font-bold bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">
+                {/* Badges: Habis vs Promo Diskon */}
+                {!p.is_available ? (
+                  <span className="absolute top-2.5 right-2.5 text-[10px] font-bold bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">
                     Habis
                   </span>
-                )}
+                ) : p.category === "Promo" && p.discount_percent && p.discount_percent > 0 ? (
+                  <span className="absolute top-2.5 right-2.5 text-[10px] font-black bg-gradient-to-r from-red-500 to-rose-600 text-white px-2 py-0.5 rounded-full shadow-xs flex items-center gap-0.5 animate-pulse">
+                    <span>🔥</span>
+                    <span>-{p.discount_percent}%</span>
+                  </span>
+                ) : null}
 
                 <div>
                   {/* Icon/Emoji */}
@@ -609,22 +658,39 @@ export default function POSPage() {
                     {p.name}
                   </h3>
                   <span
-                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-block mb-2 ${
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-block mb-1.5 ${
                       p.category === "Promo"
-                        ? "bg-red-100 text-red-600 border border-red-200"
+                        ? "bg-red-100 text-red-600 border border-red-200 font-black"
                         : "text-rose-500 bg-rose-50"
                     }`}
                   >
-                    {p.category === "Promo" ? "🔥 Promo" : p.category}
+                    {p.category === "Promo" ? "🔥 Promo Hemat" : p.category}
                   </span>
+
+                  {/* Komponen Alacarte Paket Promo jika ada */}
+                  {p.category === "Promo" && p.promo_items && p.promo_items.length > 0 && (
+                    <div className="bg-pink-50/70 rounded-xl p-1.5 mb-2 border border-pink-100">
+                      <p className="text-[10px] text-gray-600 font-medium leading-tight">
+                        <span className="font-bold text-rose-600">Isi: </span>
+                        {p.promo_items.map((it) => `${it.qty}x ${it.name}`).join(" + ")}
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center justify-between pt-2 border-t border-pink-50 mt-1">
-                  <span className="font-black text-rose-600 text-sm">
-                    {formatRupiah(p.price)}
-                  </span>
+                  <div className="min-w-0">
+                    {p.original_price && p.original_price > p.price ? (
+                      <span className="text-[10px] line-through text-gray-400 font-bold block leading-none mb-0.5">
+                        {formatRupiah(p.original_price)}
+                      </span>
+                    ) : null}
+                    <span className="font-black text-rose-600 text-sm leading-tight block">
+                      {formatRupiah(p.price)}
+                    </span>
+                  </div>
                   {p.is_available && (
-                    <div className="w-7 h-7 rounded-full bg-rose-500 text-white flex items-center justify-center shadow-sm">
+                    <div className="w-7 h-7 rounded-full bg-rose-500 text-white flex items-center justify-center shadow-sm shrink-0">
                       <Plus className="w-4 h-4 stroke-[3]" />
                     </div>
                   )}

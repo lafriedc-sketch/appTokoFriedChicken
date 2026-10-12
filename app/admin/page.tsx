@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { 
   Lock, 
   Unlock, 
   Store, 
   ShoppingBag, 
   Plus, 
+  Minus,
   Trash2, 
   Edit3, 
   Save, 
@@ -33,10 +34,13 @@ import {
   DollarSign,
   CheckCircle2,
   Receipt,
-  ChevronRight
+  ChevronRight,
+  Percent,
+  Tag,
+  Calculator
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
-import { Product, ProductAddon, InventoryItem, StoreSettings, CashierUser, Transaction, CashierActivityLog } from "@/types";
+import { Product, ProductAddon, InventoryItem, StoreSettings, CashierUser, Transaction, CashierActivityLog, PromoItemComponent } from "@/types";
 import { formatRupiah, formatDateIndo } from "@/lib/utils";
 
 export default function AdminPage() {
@@ -88,16 +92,97 @@ export default function AdminPage() {
   const [showPasswordMap, setShowPasswordMap] = useState<Record<string, boolean>>({});
 
   // Form states
-  // Product Form
-  const [productForm, setProductForm] = useState({
+  // Product Form (termasuk konfigurasi paket promo dari alacarte)
+  const [productForm, setProductForm] = useState<{
+    id: string;
+    name: string;
+    category: string;
+    price: number;
+    is_available: boolean;
+    icon_or_image_url: string;
+    original_price: number;
+    discount_percent: number;
+    promo_items: PromoItemComponent[];
+  }>({
     id: "",
     name: "",
     category: "Ayam",
     price: 0,
     is_available: true,
     icon_or_image_url: "🍗",
+    original_price: 0,
+    discount_percent: 20,
+    promo_items: [],
   });
   const [isEditingProduct, setIsEditingProduct] = useState(false);
+
+  // Helper: Daftar produk alacarte (menu satuan) untuk dikombinasikan ke promo
+  const alacarteProducts = useMemo(() => {
+    return products.filter((p) => p.category !== "Promo");
+  }, [products]);
+
+  // Tambah / kurangi menu alacarte ke paket promo
+  const handleUpdatePromoItemQty = (alacarteItem: Product, delta: number) => {
+    setProductForm((prev) => {
+      const currentPromoItems = [...(prev.promo_items || [])];
+      const existingIdx = currentPromoItems.findIndex((it) => it.productId === alacarteItem.id);
+
+      if (existingIdx > -1) {
+        const newQty = currentPromoItems[existingIdx].qty + delta;
+        if (newQty <= 0) {
+          currentPromoItems.splice(existingIdx, 1);
+        } else {
+          currentPromoItems[existingIdx].qty = newQty;
+        }
+      } else if (delta > 0) {
+        currentPromoItems.push({
+          productId: alacarteItem.id,
+          name: alacarteItem.name,
+          qty: 1,
+          unit_price: alacarteItem.price,
+        });
+      }
+
+      // Hitung total harga normal asli alacarte
+      const normalPrice = currentPromoItems.reduce(
+        (sum, it) => sum + it.qty * it.unit_price,
+        0
+      );
+
+      // Hitung harga promo baru berdasarkan diskon persen
+      const discount = prev.discount_percent || 20;
+      const promoPrice = normalPrice > 0 ? Math.round((normalPrice * (100 - discount)) / 100) : 0;
+
+      // Buat saran nama promo otomatis jika nama masih kosong atau diawali "Promo"
+      let newName = prev.name;
+      if (!prev.id && currentPromoItems.length > 0) {
+        const itemSummary = currentPromoItems.map((it) => `${it.qty > 1 ? it.qty + 'x ' : ''}${it.name}`).join(" + ");
+        newName = `Promo Combo: ${itemSummary}`;
+      }
+
+      return {
+        ...prev,
+        name: newName,
+        icon_or_image_url: prev.icon_or_image_url === "🍗" ? "🔥" : prev.icon_or_image_url,
+        original_price: normalPrice,
+        price: promoPrice,
+        promo_items: currentPromoItems,
+      };
+    });
+  };
+
+  // Ubah persentase diskon promo
+  const handleApplyDiscountPercent = (percent: number) => {
+    setProductForm((prev) => {
+      const normalPrice = prev.original_price || 0;
+      const promoPrice = normalPrice > 0 ? Math.round((normalPrice * (100 - percent)) / 100) : prev.price;
+      return {
+        ...prev,
+        discount_percent: percent,
+        price: promoPrice,
+      };
+    });
+  };
 
   // Addon Form
   const [addonForm, setAddonForm] = useState({
@@ -144,7 +229,27 @@ export default function AdminPage() {
         .from("products")
         .select("*")
         .order("created_at", { ascending: true });
-      if (pData) setProducts(pData);
+      if (pData) {
+        let merged = pData;
+        if (typeof window !== "undefined") {
+          try {
+            const extras = JSON.parse(localStorage.getItem("la_promo_products_extras") || "{}");
+            merged = pData.map((p) => {
+              const extra = extras[p.id];
+              if (extra) {
+                return {
+                  ...p,
+                  original_price: p.original_price ?? extra.original_price,
+                  discount_percent: p.discount_percent ?? extra.discount_percent,
+                  promo_items: p.promo_items ?? extra.promo_items,
+                };
+              }
+              return p;
+            });
+          } catch {}
+        }
+        setProducts(merged);
+      }
 
       // 3. Addons
       const { data: aData } = await supabase
@@ -479,32 +584,76 @@ export default function AdminPage() {
     e.preventDefault();
     if (!productForm.name.trim()) return;
 
+    const isPromo = productForm.category === "Promo";
+    const promoPayload = {
+      name: productForm.name.trim(),
+      category: productForm.category,
+      price: Number(productForm.price),
+      is_available: productForm.is_available,
+      icon_or_image_url: productForm.icon_or_image_url || (isPromo ? "🔥" : "🍗"),
+      original_price: isPromo ? Number(productForm.original_price || 0) : null,
+      discount_percent: isPromo ? Number(productForm.discount_percent || 0) : null,
+      promo_items: isPromo ? productForm.promo_items : null,
+    };
+
+    const basePayload = {
+      name: productForm.name.trim(),
+      category: productForm.category,
+      price: Number(productForm.price),
+      is_available: productForm.is_available,
+      icon_or_image_url: productForm.icon_or_image_url || (isPromo ? "🔥" : "🍗"),
+    };
+
     try {
+      let savedId = productForm.id;
+
       if (isEditingProduct && productForm.id) {
-        const { error } = await supabase
+        const { error: updErr } = await supabase
           .from("products")
-          .update({
-            name: productForm.name,
-            category: productForm.category,
-            price: Number(productForm.price),
-            is_available: productForm.is_available,
-            icon_or_image_url: productForm.icon_or_image_url,
-          })
+          .update(promoPayload)
           .eq("id", productForm.id);
 
-        if (error) throw error;
-        showNotification("Menu berhasil diperbarui!");
+        if (updErr) {
+          const { error: baseErr } = await supabase
+            .from("products")
+            .update(basePayload)
+            .eq("id", productForm.id);
+          if (baseErr) throw baseErr;
+        }
+        showNotification("Menu berhasil diperbarui! 🌸");
       } else {
-        const { error } = await supabase.from("products").insert({
-          name: productForm.name,
-          category: productForm.category,
-          price: Number(productForm.price),
-          is_available: productForm.is_available,
-          icon_or_image_url: productForm.icon_or_image_url,
-        });
+        const { data: insData, error: insErr } = await supabase
+          .from("products")
+          .insert(promoPayload)
+          .select()
+          .single();
 
-        if (error) throw error;
-        showNotification("Menu baru berhasil ditambahkan! 🍗");
+        if (insErr) {
+          const { data: baseData, error: baseErr } = await supabase
+            .from("products")
+            .insert(basePayload)
+            .select()
+            .single();
+          if (baseErr) throw baseErr;
+          savedId = baseData?.id || "";
+        } else {
+          savedId = insData?.id || "";
+        }
+        showNotification(isPromo ? "Menu promo alacarte berhasil ditambahkan! 🔥" : "Menu baru berhasil ditambahkan! 🍗");
+      }
+
+      // Simpan data alacarte promo ke local backup
+      if (isPromo && typeof window !== "undefined") {
+        try {
+          const extras = JSON.parse(localStorage.getItem("la_promo_products_extras") || "{}");
+          const targetKey = savedId || productForm.id || "promo-" + Date.now();
+          extras[targetKey] = {
+            original_price: productForm.original_price,
+            discount_percent: productForm.discount_percent,
+            promo_items: productForm.promo_items,
+          };
+          localStorage.setItem("la_promo_products_extras", JSON.stringify(extras));
+        } catch {}
       }
 
       setProductForm({
@@ -514,6 +663,9 @@ export default function AdminPage() {
         price: 0,
         is_available: true,
         icon_or_image_url: "🍗",
+        original_price: 0,
+        discount_percent: 20,
+        promo_items: [],
       });
       setIsEditingProduct(false);
       fetchAllData();
@@ -1486,6 +1638,9 @@ export default function AdminPage() {
                       price: 0,
                       is_available: true,
                       icon_or_image_url: "🍗",
+                      original_price: 0,
+                      discount_percent: 20,
+                      promo_items: [],
                     });
                   }}
                   className="text-xs text-rose-500 hover:underline font-normal"
@@ -1500,7 +1655,7 @@ export default function AdminPage() {
                 <label className="block text-xs font-bold text-gray-700 mb-1">Nama Menu</label>
                 <input
                   type="text"
-                  placeholder="Contoh: Dada Krispi Pedas"
+                  placeholder={productForm.category === "Promo" ? "Contoh: Promo Combo Kenyang (Dada + Nasi + Es Teh)" : "Contoh: Dada Krispi Pedas"}
                   value={productForm.name}
                   onChange={(e) => setProductForm({ ...productForm, name: e.target.value })}
                   className="w-full px-3.5 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400 font-semibold"
@@ -1513,8 +1668,15 @@ export default function AdminPage() {
                   <label className="block text-xs font-bold text-gray-700 mb-1">Kategori</label>
                   <select
                     value={productForm.category}
-                    onChange={(e) => setProductForm({ ...productForm, category: e.target.value })}
-                    className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400"
+                    onChange={(e) => {
+                      const newCat = e.target.value;
+                      setProductForm((prev) => ({
+                        ...prev,
+                        category: newCat,
+                        icon_or_image_url: newCat === "Promo" && prev.icon_or_image_url === "🍗" ? "🔥" : prev.icon_or_image_url,
+                      }));
+                    }}
+                    className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400 font-bold"
                   >
                     <option value="Ayam">Ayam</option>
                     <option value="Paket">Paket</option>
@@ -1536,8 +1698,171 @@ export default function AdminPage() {
                 </div>
               </div>
 
+              {/* JIKA KATEGORI PROMO: RENDER ALACARTE COMBO PICKER & DISCOUNT CALCULATOR */}
+              {productForm.category === "Promo" && (
+                <div className="bg-gradient-to-b from-rose-50/90 to-pink-50/50 border border-rose-200 rounded-2xl p-3.5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-xs font-black text-rose-700">
+                      <Tag className="w-4 h-4 text-rose-600" />
+                      <span>Pilih Menu Satuan (Alacarte)</span>
+                    </div>
+                    <span className="text-[10px] font-bold text-rose-600 bg-white px-2 py-0.5 rounded-full border border-rose-200 shadow-2xs">
+                      {productForm.promo_items?.reduce((s, it) => s + it.qty, 0) || 0} Porsi Dipilih
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-gray-500 leading-tight">
+                    Pilih menu satuan di bawah untuk digabung jadi paket promo. Harga normal dihitung otomatis dari total alacarte.
+                  </p>
+
+                  {/* Grid Pilihan Menu Alacarte */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
+                    {alacarteProducts.length === 0 ? (
+                      <p className="text-xs text-gray-400 italic col-span-2">Belum ada menu alacarte yang terdaftar.</p>
+                    ) : (
+                      alacarteProducts.map((alacarte) => {
+                        const current = productForm.promo_items?.find((it) => it.productId === alacarte.id);
+                        const qty = current ? current.qty : 0;
+                        const isSelected = qty > 0;
+
+                        return (
+                          <div
+                            key={alacarte.id}
+                            className={`p-2 rounded-xl border flex items-center justify-between gap-1.5 transition-all ${
+                              isSelected
+                                ? "bg-white border-rose-400 shadow-xs ring-1 ring-rose-200"
+                                : "bg-white/80 border-gray-200 hover:border-pink-300"
+                            }`}
+                          >
+                            <div className="min-w-0 flex items-center gap-1.5">
+                              <span className="text-base">{alacarte.icon_or_image_url || "🍗"}</span>
+                              <div className="truncate">
+                                <p className="text-[11px] font-bold text-gray-800 truncate">{alacarte.name}</p>
+                                <p className="text-[10px] font-semibold text-gray-400">{formatRupiah(alacarte.price)}</p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1 shrink-0">
+                              {qty > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdatePromoItemQty(alacarte, -1)}
+                                  className="w-6 h-6 rounded-lg bg-gray-100 hover:bg-rose-100 text-gray-700 hover:text-rose-600 flex items-center justify-center font-bold text-xs transition-colors"
+                                  title="Kurangi"
+                                >
+                                  <Minus className="w-3 h-3" />
+                                </button>
+                              )}
+                              {qty > 0 && (
+                                <span className="w-5 text-center text-xs font-black text-rose-600">
+                                  {qty}
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleUpdatePromoItemQty(alacarte, 1)}
+                                className={`w-6 h-6 rounded-lg flex items-center justify-center font-bold text-xs transition-colors ${
+                                  qty > 0
+                                    ? "bg-rose-500 text-white hover:bg-rose-600 shadow-xs"
+                                    : "bg-pink-100 text-rose-600 hover:bg-rose-500 hover:text-white"
+                                }`}
+                                title="Tambah"
+                              >
+                                <Plus className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {/* Ringkasan Item yang Terpilih */}
+                  {productForm.promo_items && productForm.promo_items.length > 0 && (
+                    <div className="bg-white rounded-xl p-2.5 border border-rose-200 space-y-1.5 shadow-2xs">
+                      <div className="text-[11px] font-bold text-gray-700 flex items-center justify-between">
+                        <span>Rincian Komponen Paket:</span>
+                        <span className="text-gray-500">
+                          Total Normal: <strong className="text-gray-800">{formatRupiah(productForm.original_price || 0)}</strong>
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {productForm.promo_items.map((it) => (
+                          <span
+                            key={it.productId}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-pink-50 border border-pink-200 text-[10px] font-bold text-gray-700"
+                          >
+                            <span>{it.qty}x {it.name}</span>
+                            <span className="text-gray-400 font-normal">({formatRupiah(it.unit_price * it.qty)})</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Pengaturan Diskon Persen */}
+                  <div className="pt-2 border-t border-rose-200/60 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-gray-800 flex items-center gap-1">
+                        <Percent className="w-3.5 h-3.5 text-rose-500" />
+                        <span>Diskon Promo (%)</span>
+                      </label>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={productForm.discount_percent ?? 20}
+                          onChange={(e) => handleApplyDiscountPercent(Number(e.target.value) || 0)}
+                          className="w-14 px-2 py-1 text-xs text-center font-black bg-white border border-rose-300 rounded-lg text-rose-600 focus:ring-2 focus:ring-rose-400"
+                        />
+                        <span className="text-xs font-black text-rose-600">%</span>
+                      </div>
+                    </div>
+
+                    {/* Preset Diskon Cepat */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] font-bold text-gray-500">Preset Diskon:</span>
+                      {[10, 15, 20, 25, 30, 50].map((disc) => (
+                        <button
+                          key={disc}
+                          type="button"
+                          onClick={() => handleApplyDiscountPercent(disc)}
+                          className={`px-2 py-0.5 rounded-lg text-[10px] font-black transition-all ${
+                            productForm.discount_percent === disc
+                              ? "bg-rose-500 text-white shadow-xs"
+                              : "bg-white text-gray-600 border border-gray-200 hover:border-rose-300 hover:text-rose-600"
+                          }`}
+                        >
+                          {disc}%
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Preview Hemat & Harga Promo */}
+                    <div className="bg-white/90 p-2.5 rounded-xl border border-rose-200 flex items-center justify-between shadow-2xs">
+                      <div>
+                        <div className="text-[10px] text-gray-500 flex items-center gap-1">
+                          <span>Total Normal:</span>
+                          <span className="line-through text-gray-400 font-semibold">{formatRupiah(productForm.original_price || 0)}</span>
+                        </div>
+                        <div className="text-[10px] font-bold text-emerald-600 mt-0.5">
+                          Hemat {formatRupiah(Math.max(0, (productForm.original_price || 0) - (productForm.price || 0)))} ({productForm.discount_percent || 0}%)
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[10px] font-bold text-rose-600 block uppercase">Harga Jual Promo</span>
+                        <span className="text-base font-black text-rose-600">{formatRupiah(productForm.price || 0)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">Harga Jual (Rp)</label>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  {productForm.category === "Promo" ? "Harga Jual Promo Final (Rp)" : "Harga Jual (Rp)"}
+                </label>
                 <input
                   type="number"
                   value={productForm.price || ""}
@@ -1545,6 +1870,11 @@ export default function AdminPage() {
                   className="w-full px-3.5 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-bold text-rose-600 focus:ring-2 focus:ring-rose-400"
                   required
                 />
+                {productForm.category === "Promo" && (
+                  <p className="text-[10px] text-gray-400 mt-1">
+                    *Harga promo otomatis terisi dari kalkulasi diskon alacarte, namun Anda tetap dapat menyesuaikan/membulatkan nominalnya jika diperlukan.
+                  </p>
+                )}
               </div>
 
               <div className="flex items-center gap-2 pt-1">
@@ -1582,22 +1912,43 @@ export default function AdminPage() {
                   key={p.id}
                   className="p-3 bg-pink-50/40 rounded-2xl border border-pink-100 flex items-center justify-between gap-2"
                 >
-                  <div className="flex items-center gap-3">
-                    <span className="text-2xl p-2 bg-white rounded-xl shadow-xs">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="text-2xl p-2 bg-white rounded-xl shadow-xs shrink-0">
                       {p.icon_or_image_url || "🍗"}
                     </span>
-                    <div>
-                      <h4 className="font-bold text-xs text-gray-800">{p.name}</h4>
-                      <div className="flex items-center gap-2 mt-0.5">
+                    <div className="min-w-0">
+                      <h4 className="font-bold text-xs text-gray-800 truncate">{p.name}</h4>
+
+                      {/* Komponen Promo jika ada */}
+                      {p.category === "Promo" && p.promo_items && p.promo_items.length > 0 && (
+                        <p className="text-[10px] text-gray-500 font-medium truncate max-w-[200px] sm:max-w-xs mt-0.5">
+                          Isi: {p.promo_items.map((it) => `${it.qty}x ${it.name}`).join(" + ")}
+                        </p>
+                      )}
+
+                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                         <span
                           className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                             p.category === "Promo"
-                              ? "bg-red-50 text-red-600 border-red-200"
+                              ? "bg-red-50 text-red-600 border-red-200 font-black"
                               : "bg-white text-gray-500 border-pink-100"
                           }`}
                         >
                           {p.category === "Promo" ? "🔥 Promo" : p.category}
                         </span>
+
+                        {p.category === "Promo" && p.discount_percent && p.discount_percent > 0 ? (
+                          <span className="text-[9px] font-black px-1.5 py-0.2 bg-red-500 text-white rounded-md">
+                            -{p.discount_percent}%
+                          </span>
+                        ) : null}
+
+                        {p.original_price && p.original_price > p.price ? (
+                          <span className="text-[10px] line-through text-gray-400 font-semibold">
+                            {formatRupiah(p.original_price)}
+                          </span>
+                        ) : null}
+
                         <span className="text-xs font-black text-rose-600">
                           {formatRupiah(p.price)}
                         </span>
@@ -1605,7 +1956,7 @@ export default function AdminPage() {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 shrink-0">
                     {/* Toggle Availability */}
                     <button
                       type="button"
@@ -1630,7 +1981,10 @@ export default function AdminPage() {
                           category: p.category,
                           price: p.price,
                           is_available: p.is_available,
-                          icon_or_image_url: p.icon_or_image_url || "🍗",
+                          icon_or_image_url: p.icon_or_image_url || (p.category === "Promo" ? "🔥" : "🍗"),
+                          original_price: p.original_price || 0,
+                          discount_percent: p.discount_percent || 20,
+                          promo_items: p.promo_items || [],
                         });
                       }}
                       className="p-2 text-gray-500 hover:text-rose-600 hover:bg-white rounded-xl transition-colors"

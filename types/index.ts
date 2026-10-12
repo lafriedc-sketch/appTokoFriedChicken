@@ -1,5 +1,12 @@
 export type ProductCategory = 'Ayam' | 'Paket' | 'Promo' | 'Makanan' | 'Minuman' | 'Lainnya';
 
+export interface PromoItemComponent {
+  productId: string;
+  name: string;
+  qty: number;
+  unit_price: number;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -7,6 +14,9 @@ export interface Product {
   price: number;
   is_available: boolean;
   icon_or_image_url?: string | null;
+  original_price?: number | null;
+  discount_percent?: number | null;
+  promo_items?: PromoItemComponent[] | null;
   created_at?: string;
 }
 
