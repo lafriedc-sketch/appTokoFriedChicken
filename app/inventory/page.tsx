@@ -11,16 +11,19 @@ import {
   CheckCircle2, 
   Save, 
   Wallet,
-  Sparkles
+  Sparkles,
+  Layers,
+  Clock
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
-import { InventoryItem, InventoryLog } from "@/types";
+import { InventoryItem, InventoryLog, InventoryBatch } from "@/types";
 import { formatRupiah, formatDateIndo } from "@/lib/utils";
 
 export default function InventoryPage() {
-  const [activeTab, setActiveTab] = useState<"items" | "purchase" | "opname" | "logs">("items");
+  const [activeTab, setActiveTab] = useState<"items" | "purchase" | "opname" | "batches" | "logs">("items");
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [logs, setLogs] = useState<InventoryLog[]>([]);
+  const [batches, setBatches] = useState<InventoryBatch[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Form Input Belanja Masuk
@@ -82,6 +85,29 @@ export default function InventoryPage() {
         }));
         setLogs(formattedLogs);
       }
+
+      // 3. Fetch inventory batches (FIFO)
+      const { data: batchData } = await supabase
+        .from("inventory_batches")
+        .select(`
+          id,
+          inventory_item_id,
+          batch_date,
+          initial_qty,
+          remaining_qty,
+          cost_per_unit,
+          created_at,
+          inventory_items (id, name, unit)
+        `)
+        .order("batch_date", { ascending: false });
+
+      if (batchData) {
+        const formattedBatches: any[] = batchData.map((b: any) => ({
+          ...b,
+          inventory_item: b.inventory_items,
+        }));
+        setBatches(formattedBatches);
+      }
     } catch (err) {
       console.error("Gagal load inventaris:", err);
     } finally {
@@ -110,19 +136,37 @@ export default function InventoryPage() {
       const selectedItem = items.find((it) => it.id === purchaseForm.item_id);
       if (!selectedItem) return;
 
+      const qtyNum = Number(purchaseForm.qty);
+      const costTotalNum = Number(purchaseForm.cost_total);
+      const costPerUnit = qtyNum > 0 ? costTotalNum / qtyNum : 0;
+      const batchDate = new Date().toISOString();
+
       // 1. Insert Inventory Log
       const { error: logErr } = await supabase.from("inventory_logs").insert({
         item_id: purchaseForm.item_id,
-        change_qty: Number(purchaseForm.qty),
+        change_qty: qtyNum,
         type: "in",
-        cost_total: Number(purchaseForm.cost_total),
+        cost_total: costTotalNum,
         payment_source: purchaseForm.payment_source,
       });
 
       if (logErr) throw logErr;
 
-      // 2. Update Item Current Stock
-      const newStock = Number(selectedItem.current_stock) + Number(purchaseForm.qty);
+      // 2. Insert data baru ke tabel inventory_batches (FIFO)
+      const { error: batchErr } = await supabase.from("inventory_batches").insert({
+        inventory_item_id: purchaseForm.item_id,
+        initial_qty: qtyNum,
+        remaining_qty: qtyNum,
+        cost_per_unit: costPerUnit,
+        batch_date: batchDate,
+      });
+
+      if (batchErr) {
+        console.error("Gagal menyimpan inventory_batches:", batchErr);
+      }
+
+      // 3. Update Item Current Stock
+      const newStock = Number(selectedItem.current_stock) + qtyNum;
       const { error: updateErr } = await supabase
         .from("inventory_items")
         .update({ current_stock: newStock })
@@ -130,7 +174,7 @@ export default function InventoryPage() {
 
       if (updateErr) throw updateErr;
 
-      showToast(`Belanja ${selectedItem.name} berhasil dicatat! (+${purchaseForm.qty} ${selectedItem.unit}) 🌸`);
+      showToast(`Belanja ${selectedItem.name} berhasil dicatat & batch FIFO dibuat! (+${qtyNum} ${selectedItem.unit} @ ${formatRupiah(costPerUnit)}) 🌸`);
       setPurchaseForm({
         item_id: items[0]?.id || "",
         qty: 0,
@@ -207,6 +251,7 @@ export default function InventoryPage() {
         {[
           { key: "items", label: "Status Stok Bahan", icon: Package },
           { key: "purchase", label: "Catat Belanja Masuk", icon: ShoppingCart },
+          { key: "batches", label: "Batch Stok (FIFO)", icon: Layers },
           { key: "opname", label: "Stok Opname Fisik", icon: ClipboardCheck },
           { key: "logs", label: "Riwayat Pergerakan", icon: History },
         ].map((tab) => {
@@ -391,6 +436,96 @@ export default function InventoryPage() {
               <span>Simpan Catatan Belanja</span>
             </button>
           </form>
+        </div>
+      )}
+
+      {/* TAB: BATCH STOK FIFO */}
+      {activeTab === "batches" && (
+        <div className="bg-white rounded-3xl p-6 shadow-sm border border-pink-100 max-w-4xl space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <h2 className="text-base font-extrabold text-gray-800 flex items-center gap-2">
+                <Layers className="w-5 h-5 text-rose-500" />
+                <span>Daftar Batch Persediaan FIFO</span>
+              </h2>
+              <p className="text-xs text-gray-500">
+                Sistem otomatis memotong stok dari batch tertua dengan remaining_qty &gt; 0 secara berurutan dan menghitung modal HPP aktual.
+              </p>
+            </div>
+            <span className="text-xs font-bold text-rose-600 bg-pink-50 border border-pink-200 px-3 py-1 rounded-full self-start sm:self-auto">
+              {batches.filter((b) => Number(b.remaining_qty) > 0).length} Batch Aktif
+            </span>
+          </div>
+
+          <div className="space-y-2.5">
+            {batches.map((b) => {
+              const hasStock = Number(b.remaining_qty) > 0;
+              const unit = b.inventory_item?.unit || "";
+              const percentLeft = Number(b.initial_qty) > 0 ? ((Number(b.remaining_qty) / Number(b.initial_qty)) * 100).toFixed(0) : "0";
+
+              return (
+                <div
+                  key={b.id}
+                  className={`p-3.5 rounded-2xl border transition-all ${
+                    hasStock
+                      ? "bg-white border-pink-200 shadow-2xs hover:border-rose-300"
+                      : "bg-gray-50/70 border-gray-200 opacity-60"
+                  }`}
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-extrabold text-gray-800 text-xs">
+                          {b.inventory_item?.name || "Bahan Baku"}
+                        </span>
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            hasStock
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-gray-200 text-gray-600"
+                          }`}
+                        >
+                          {hasStock ? `Sisa ${percentLeft}%` : "Habis"}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 text-[10px] text-gray-400 mt-1">
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-gray-400" />
+                          <span>Tgl Batch: {formatDateIndo(b.batch_date || b.created_at)}</span>
+                        </span>
+                        <span>&bull;</span>
+                        <span>Modal Satuan: <strong className="text-gray-700">{formatRupiah(b.cost_per_unit)}</strong>/{unit}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-4 text-right">
+                      <div>
+                        <span className="text-[10px] text-gray-400 block font-medium">Sisa / Masuk:</span>
+                        <span className="text-xs font-black text-gray-900">
+                          <strong className={hasStock ? "text-rose-600" : "text-gray-500"}>
+                            {b.remaining_qty}
+                          </strong>
+                          {" "}/ {b.initial_qty} {unit}
+                        </span>
+                      </div>
+                      <div className="border-l border-gray-100 pl-4">
+                        <span className="text-[10px] text-gray-400 block font-medium">Sisa Nilai Batch:</span>
+                        <span className="text-xs font-black text-rose-600">
+                          {formatRupiah(Number(b.remaining_qty) * Number(b.cost_per_unit || 0))}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {batches.length === 0 && (
+              <div className="text-center py-8 text-gray-400 text-xs bg-pink-50/30 rounded-2xl border border-dashed border-pink-200">
+                Belum ada batch belanja bahan. Masukkan belanja di tab "Catat Belanja Masuk" untuk membuat batch FIFO baru.
+              </div>
+            )}
+          </div>
         </div>
       )}
 

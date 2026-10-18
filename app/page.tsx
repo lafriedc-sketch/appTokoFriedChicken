@@ -15,7 +15,10 @@ import {
   ArrowRight,
   RefreshCw,
   Search,
-  CheckCircle2
+  CheckCircle2,
+  ZoomIn,
+  Maximize2,
+  X
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { Product, ProductAddon, CartItem, StoreSettings, Transaction, CashierSession } from "@/types";
@@ -71,10 +74,48 @@ const DEFAULT_ADDONS: ProductAddon[] = [
   { id: "3", name: "Saus Pedas", price: 1000 },
 ];
 
+// In-memory module cache untuk instant page switching tanpa delay
+let globalCachedProducts: Product[] | null = null;
+let globalCachedAddons: ProductAddon[] | null = null;
+let globalCachedSettings: StoreSettings | null = null;
+
 export default function POSPage() {
-  const [products, setProducts] = useState<Product[]>([]);
-  const [addons, setAddons] = useState<ProductAddon[]>([]);
-  const [settings, setSettings] = useState<StoreSettings | null>(null);
+  const [products, setProducts] = useState<Product[]>(() => {
+    if (globalCachedProducts && globalCachedProducts.length > 0) return globalCachedProducts;
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("la_pos_products_cache");
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed && parsed.length > 0) {
+            globalCachedProducts = parsed;
+            return parsed;
+          }
+        }
+      } catch {}
+    }
+    return DEFAULT_PRODUCTS;
+  });
+
+  const [addons, setAddons] = useState<ProductAddon[]>(() => {
+    if (globalCachedAddons && globalCachedAddons.length > 0) return globalCachedAddons;
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("la_pos_addons_cache");
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed && parsed.length > 0) {
+            globalCachedAddons = parsed;
+            return parsed;
+          }
+        }
+      } catch {}
+    }
+    return DEFAULT_ADDONS;
+  });
+
+  const [settings, setSettings] = useState<StoreSettings | null>(() => globalCachedSettings);
+  const [isLoadingProducts, setIsLoadingProducts] = useState<boolean>(() => !globalCachedProducts || globalCachedProducts.length === 0);
   const [activeCategory, setActiveCategory] = useState<string>("Semua");
   const [searchQuery, setSearchQuery] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -93,6 +134,7 @@ export default function POSPage() {
 
   // Checkout modal & payment
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+  const [isQrisZoomOpen, setIsQrisZoomOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "qris">("cash");
   const [cashReceived, setCashReceived] = useState<number>(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -103,7 +145,7 @@ export default function POSPage() {
   // Cart animation trigger
   const [cartBadgeAnimate, setCartBadgeAnimate] = useState(false);
 
-  // Fetch initial data
+  // Fetch initial data secara PARALEL untuk kecepatan maksimal (< 800ms vs 5000ms)
   const fetchData = async () => {
     try {
       // 0. Check Cashier Session
@@ -120,33 +162,44 @@ export default function POSPage() {
         }
       }
 
-      // 1. Check Drawer
-      const { data: drawerData } = await supabase
-        .from("cash_drawers")
-        .select("*")
-        .eq("status", "open")
-        .order("opened_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      // 1. Eksekusi semua query secara PARALEL (Promise.all)
+      const [drawerRes, productsRes, addonsRes, settingsRes] = await Promise.all([
+        supabase
+          .from("cash_drawers")
+          .select("*")
+          .eq("status", "open")
+          .order("opened_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from("products")
+          .select("*")
+          .order("created_at", { ascending: true }),
+        supabase
+          .from("product_addons")
+          .select("*")
+          .order("created_at", { ascending: true }),
+        supabase
+          .from("store_settings")
+          .select("*")
+          .limit(1)
+          .maybeSingle(),
+      ]);
 
+      // Check Drawer
       const localDrawer = typeof window !== "undefined" ? localStorage.getItem("la_active_drawer") : null;
-      if (!drawerData && !localDrawer) {
+      if (!drawerRes.data && !localDrawer) {
         setIsDrawerOpenModal(true);
       }
       setHasCheckedDrawer(true);
 
-      // 2. Fetch Products
-      const { data: pData, error: pErr } = await supabase
-        .from("products")
-        .select("*")
-        .order("created_at", { ascending: true });
-
-      if (!pErr && pData && pData.length > 0) {
-        let merged = pData;
+      // Handle Products
+      if (!productsRes.error && productsRes.data && productsRes.data.length > 0) {
+        let merged = productsRes.data;
         if (typeof window !== "undefined") {
           try {
             const extras = JSON.parse(localStorage.getItem("la_promo_products_extras") || "{}");
-            merged = pData.map((p) => {
+            merged = productsRes.data.map((p) => {
               const extra = extras[p.id];
               if (extra) {
                 return {
@@ -161,36 +214,34 @@ export default function POSPage() {
           } catch {}
         }
         setProducts(merged);
-      } else {
-        setProducts(DEFAULT_PRODUCTS);
+        globalCachedProducts = merged;
+        if (typeof window !== "undefined") {
+          try {
+            localStorage.setItem("la_pos_products_cache", JSON.stringify(merged));
+          } catch {}
+        }
       }
 
-      // 3. Fetch Addons
-      const { data: aData, error: aErr } = await supabase
-        .from("product_addons")
-        .select("*")
-        .order("created_at", { ascending: true });
-
-      if (!aErr && aData && aData.length > 0) {
-        setAddons(aData);
-      } else {
-        setAddons(DEFAULT_ADDONS);
+      // Handle Addons
+      if (!addonsRes.error && addonsRes.data && addonsRes.data.length > 0) {
+        setAddons(addonsRes.data);
+        globalCachedAddons = addonsRes.data;
+        if (typeof window !== "undefined") {
+          try {
+            localStorage.setItem("la_pos_addons_cache", JSON.stringify(addonsRes.data));
+          } catch {}
+        }
       }
 
-      // 4. Fetch Settings
-      const { data: sData } = await supabase
-        .from("store_settings")
-        .select("*")
-        .limit(1)
-        .maybeSingle();
-
-      if (sData) {
-        setSettings(sData);
+      // Handle Settings
+      if (settingsRes.data) {
+        setSettings(settingsRes.data);
+        globalCachedSettings = settingsRes.data;
       }
     } catch (err) {
       console.error("Error fetching POS data:", err);
-      setProducts(DEFAULT_PRODUCTS);
-      setAddons(DEFAULT_ADDONS);
+    } finally {
+      setIsLoadingProducts(false);
     }
   };
 
@@ -387,6 +438,226 @@ export default function POSPage() {
 
     const currentCashierName = cashierSession?.name || "Kasir";
 
+    // PROSES BACKGROUND ASYNCHRONOUS UNTUK MEMOTONG STOK (FIFO) BERDASARKAN RESEP
+    const processFifoStockDeduction = async (cartItems: CartItem[]) => {
+      try {
+        for (const item of cartItems) {
+          if (!item.productId || item.qty <= 0) continue;
+
+          // Map untuk agregasi total kebutuhan bahan baku dan kemasan (rawItemId -> totalNeededQty)
+          const requiredMaterialsMap = new Map<string, number>();
+
+          // 1. Ambil data kebutuhan bahan dari product_recipes berdasarkan productId
+          let { data: productRecs, error: recErr } = await supabase
+            .from("product_recipes")
+            .select("*")
+            .eq("product_id", item.productId);
+
+          if (recErr) {
+            console.error(`Gagal mengambil resep untuk productId ${item.productId}:`, recErr);
+          }
+
+          // Cek jika produk merupakan promo / paket dengan promo_items
+          if (!productRecs || productRecs.length === 0) {
+            const matchedProd = products.find((p) => p.id === item.productId);
+            if (matchedProd?.promo_items && matchedProd.promo_items.length > 0) {
+              const combinedRecipes: any[] = [];
+              for (const comp of matchedProd.promo_items) {
+                const { data: compRecs } = await supabase
+                  .from("product_recipes")
+                  .select("*")
+                  .eq("product_id", comp.productId);
+
+                if (compRecs && compRecs.length > 0) {
+                  compRecs.forEach((cr) => {
+                    combinedRecipes.push({
+                      ...cr,
+                      qty_required: Number(cr.qty_required || 1) * Number(comp.qty || 1),
+                    });
+                  });
+                }
+              }
+              productRecs = combinedRecipes;
+            }
+          }
+
+          if (productRecs && productRecs.length > 0) {
+            for (const pr of productRecs) {
+              if (!pr.inventory_item_id) continue;
+              const need = Number(pr.qty_required || 1) * Number(item.qty);
+              requiredMaterialsMap.set(
+                pr.inventory_item_id,
+                (requiredMaterialsMap.get(pr.inventory_item_id) || 0) + need
+              );
+            }
+          }
+
+          // 1b. Iterasi pada item.selectedAddons (jika ada) dan ambil resep dari addon_recipes
+          if (item.selectedAddons && item.selectedAddons.length > 0) {
+            for (const addon of item.selectedAddons) {
+              if (!addon.id) continue;
+              try {
+                const { data: addonRecs, error: addonRecErr } = await supabase
+                  .from("addon_recipes")
+                  .select("*")
+                  .eq("addon_id", addon.id);
+
+                if (addonRecErr) {
+                  console.error(`Gagal mengambil resep untuk addonId ${addon.id}:`, addonRecErr);
+                } else if (addonRecs && addonRecs.length > 0) {
+                  for (const ar of addonRecs) {
+                    if (!ar.inventory_item_id) continue;
+                    // Kebutuhan bahan baku / kemasan addon dikalikan dengan qty cart item
+                    const addonNeed = Number(ar.qty_required || 1) * Number(item.qty);
+                    requiredMaterialsMap.set(
+                      ar.inventory_item_id,
+                      (requiredMaterialsMap.get(ar.inventory_item_id) || 0) + addonNeed
+                    );
+                  }
+                }
+              } catch (addonErr) {
+                console.error("Error fetching addon_recipes:", addonErr);
+              }
+            }
+          }
+
+          // Jika tidak ada bahan yang perlu dipotong untuk menu & addon ini, lewati
+          if (requiredMaterialsMap.size === 0) {
+            continue;
+          }
+
+          // Looping setiap bahan dalam resep yang telah diagregasikan
+          for (const [rawItemId, totalNeededQty] of Array.from(requiredMaterialsMap.entries())) {
+            if (!rawItemId || totalNeededQty <= 0) continue;
+            let remainingToDeduct = totalNeededQty;
+            let totalHpp = 0;
+            let totalDeductedFromBatches = 0;
+
+            // 2. Cari stok bahan di inventory_batches (filter remaining_qty > 0, urutkan batch_date ASCENDING)
+            const { data: batches, error: batchErr } = await supabase
+              .from("inventory_batches")
+              .select("*")
+              .eq("inventory_item_id", rawItemId)
+              .gt("remaining_qty", 0)
+              .order("batch_date", { ascending: true });
+
+            if (batchErr) {
+              console.error(`Gagal mengambil inventory_batches untuk ${rawItemId}:`, batchErr);
+            }
+
+            // 3. Lakukan looping FIFO: potong remaining_qty dari batch tertua
+            if (batches && batches.length > 0) {
+              for (const batch of batches) {
+                if (remainingToDeduct <= 0) break;
+
+                const batchRemaining = Number(batch.remaining_qty || 0);
+                if (batchRemaining <= 0) continue;
+
+                const deductQty = Math.min(batchRemaining, remainingToDeduct);
+                const costPerUnit = Number(batch.cost_per_unit || 0);
+                const batchCost = deductQty * costPerUnit;
+
+                totalHpp += batchCost;
+                totalDeductedFromBatches += deductQty;
+                remainingToDeduct -= deductQty;
+
+                const newRemaining = Math.max(0, batchRemaining - deductQty);
+
+                // Update ke tabel inventory_batches
+                const { error: updBatchErr } = await supabase
+                  .from("inventory_batches")
+                  .update({ remaining_qty: newRemaining })
+                  .eq("id", batch.id);
+
+                if (updBatchErr) {
+                  console.error(`Gagal update batch ${batch.id}:`, updBatchErr);
+                }
+              }
+            }
+
+            // 4. Krusial untuk Laba Bersih: Hitung total HPP (modal asli) dari batch yang terpotong.
+            // Insert catatan ke inventory_logs dengan data: type: "out", payment_source: "system_fifo",
+            // dan masukkan total HPP tersebut ke kolom cost_total.
+            const qtyDeducted = totalDeductedFromBatches > 0 ? totalDeductedFromBatches : totalNeededQty;
+
+            const logPayload = {
+              item_id: rawItemId,
+              change_qty: -qtyDeducted,
+              type: "out",
+              cost_total: totalHpp,
+              payment_source: "system_fifo",
+            };
+
+            let insertedRow: any = null;
+            const { data: logRes, error: logErr } = await supabase
+              .from("inventory_logs")
+              .insert(logPayload)
+              .select()
+              .maybeSingle();
+
+            if (logErr) {
+              // Jika constraint database belum diperbarui, fallback ke payment_source 'other'
+              if (logErr.code === "23514" || logErr.message?.includes("payment_source")) {
+                const { data: retryLog } = await supabase
+                  .from("inventory_logs")
+                  .insert({
+                    ...logPayload,
+                    payment_source: "other",
+                  })
+                  .select()
+                  .maybeSingle();
+                insertedRow = retryLog;
+              } else {
+                console.error("Gagal insert log FIFO:", logErr);
+              }
+            } else {
+              insertedRow = logRes;
+            }
+
+            // Simpan ke local audit trail untuk offline/fallback laporan
+            if (typeof window !== "undefined") {
+              try {
+                const localFifoLogs = JSON.parse(localStorage.getItem("la_fifo_logs") || "[]");
+                localFifoLogs.unshift(
+                  insertedRow || {
+                    id: "fifo-log-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
+                    item_id: rawItemId,
+                    change_qty: -qtyDeducted,
+                    type: "out",
+                    cost_total: totalHpp,
+                    payment_source: "system_fifo",
+                    created_at: new Date().toISOString(),
+                  }
+                );
+                localStorage.setItem("la_fifo_logs", JSON.stringify(localFifoLogs.slice(0, 200)));
+              } catch {}
+            }
+
+            // 5. Update current_stock di tabel inventory_items
+            const { data: curItem } = await supabase
+              .from("inventory_items")
+              .select("current_stock")
+              .eq("id", rawItemId)
+              .maybeSingle();
+
+            if (curItem) {
+              const updatedStock = Math.max(0, Number(curItem.current_stock || 0) - totalNeededQty);
+              const { error: updItemErr } = await supabase
+                .from("inventory_items")
+                .update({ current_stock: updatedStock })
+                .eq("id", rawItemId);
+
+              if (updItemErr) {
+                console.error(`Gagal update current_stock ${rawItemId}:`, updItemErr);
+              }
+            }
+          }
+        }
+      } catch (fifoErr) {
+        console.error("Gagal proses potong stok FIFO di background:", fifoErr);
+      }
+    };
+
     try {
       // 1. Insert Transaction (Mencoba dengan kolom cashier_name)
       let transData: any = null;
@@ -482,6 +753,12 @@ export default function POSPage() {
         .insert(itemsPayloadWithId);
 
       if (itemsErr) console.error("Error inserting items:", itemsErr);
+
+      // PROSES BACKGROUND ASYNCHRONOUS: MEMOTONG STOK (FIFO) BERDASARKAN RESEP
+      const cartSnapshot = [...cart];
+      processFifoStockDeduction(cartSnapshot).catch((err) => {
+        console.error("Asynchronous FIFO process error:", err);
+      });
 
       const completedTransaction: Transaction = {
         ...transData,
@@ -699,13 +976,23 @@ export default function POSPage() {
             ))}
           </div>
 
-          {filteredProducts.length === 0 && (
+          {isLoadingProducts && filteredProducts.length === 0 ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
+              {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+                <div key={i} className="bg-white rounded-3xl p-4 border border-pink-100 shadow-sm animate-pulse space-y-3">
+                  <div className="w-12 h-12 bg-pink-100/70 rounded-2xl mx-auto" />
+                  <div className="h-4 bg-pink-100/70 rounded-lg w-3/4 mx-auto" />
+                  <div className="h-3 bg-pink-50 rounded-lg w-1/2 mx-auto" />
+                </div>
+              ))}
+            </div>
+          ) : filteredProducts.length === 0 ? (
             <div className="bg-white rounded-3xl p-8 text-center border border-pink-100">
-              <span className="text-3xl mb-2 block">🍗🔍</span>
+              <span className="text-3xl mb-2 block">🍗 🔍</span>
               <p className="text-sm font-bold text-gray-700">Menu tidak ditemukan</p>
               <p className="text-xs text-gray-400 mt-1">Coba kata kunci lain atau pilih kategori Semua</p>
             </div>
-          )}
+          ) : null}
         </div>
 
         {/* Cart Panel (Desktop Sticky & Mobile Floating Bar / Trigger) */}
@@ -1031,20 +1318,51 @@ export default function POSPage() {
               {/* QRIS Mode Presentation */}
               {paymentMethod === "qris" && (
                 <div className="text-center p-4 bg-pink-50/50 rounded-2xl border border-pink-200 space-y-3">
-                  <p className="text-xs font-bold text-gray-700">
-                    Scan Barcode QRIS LA Fried Chicken
-                  </p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-bold text-gray-700">
+                      Scan Barcode QRIS LA Fried Chicken
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setIsQrisZoomOpen(true)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-rose-50 text-rose-600 border border-pink-200 rounded-xl text-[11px] font-bold shadow-2xs transition-all active:scale-95"
+                    >
+                      <ZoomIn className="w-3.5 h-3.5" />
+                      <span>Perbesar QR</span>
+                    </button>
+                  </div>
                   
-                  {/* QR Image */}
-                  <div className="w-48 h-48 mx-auto bg-white p-2 rounded-2xl border border-pink-100 shadow-md flex items-center justify-center">
+                  {/* QR Image (Larger & Clickable to Zoom) */}
+                  <div 
+                    onClick={() => setIsQrisZoomOpen(true)}
+                    className="w-56 h-56 sm:w-60 sm:h-60 mx-auto bg-white p-2.5 rounded-2xl border border-pink-200 shadow-md flex items-center justify-center cursor-pointer group hover:border-rose-400 hover:shadow-lg transition-all relative overflow-hidden"
+                    title="Ketuk untuk memperbesar QRIS ke layar penuh"
+                  >
                     <img
                       src={
                         settings?.qris_static_image_url ||
-                        `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=LA-FRIED-CHICKEN-PAY-${cartTotal}`
+                        `https://api.qrserver.com/v1/create-qr-code/?size=350x350&data=LA-FRIED-CHICKEN-PAY-${cartTotal}`
                       }
                       alt="QRIS Barcode"
-                      className="w-full h-full object-contain rounded-xl"
+                      className="w-full h-full object-contain rounded-xl group-hover:scale-105 transition-transform duration-200"
                     />
+                    <div className="absolute inset-0 bg-rose-600/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-2xl backdrop-blur-[0.5px]">
+                      <span className="px-3 py-1.5 bg-rose-600/90 text-white text-[11px] font-black rounded-xl shadow-md flex items-center gap-1.5">
+                        <ZoomIn className="w-3.5 h-3.5" />
+                        <span>Klik untuk Perbesar</span>
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-center">
+                    <button
+                      type="button"
+                      onClick={() => setIsQrisZoomOpen(true)}
+                      className="text-xs font-bold text-rose-600 hover:text-rose-700 hover:underline flex items-center gap-1.5 py-1 px-3 bg-white/80 rounded-xl border border-pink-100"
+                    >
+                      <Maximize2 className="w-3.5 h-3.5" />
+                      <span>Tampilkan Layar Penuh ke Pelanggan</span>
+                    </button>
                   </div>
 
                   <p className="text-xs text-gray-500">
@@ -1074,6 +1392,70 @@ export default function POSPage() {
                   </span>
                 </>
               )}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL ZOOM QRIS LAYAR BESAR (UNTUK SCAN HP PELANGGAN) */}
+      {isQrisZoomOpen && (
+        <div 
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-gray-950/80 backdrop-blur-md animate-pop-in"
+          onClick={() => setIsQrisZoomOpen(false)}
+        >
+          <div 
+            className="bg-white rounded-3xl max-w-sm sm:max-w-md w-full p-5 sm:p-6 shadow-2xl border border-pink-100 text-center relative flex flex-col items-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Close button */}
+            <button
+              type="button"
+              onClick={() => setIsQrisZoomOpen(false)}
+              className="absolute top-4 right-4 p-2 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+              title="Tutup Tampilan QRIS"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* Store Header */}
+            <div className="mb-3">
+              <span className="inline-flex items-center gap-1 px-3 py-1 bg-rose-50 border border-rose-200 text-rose-600 text-xs font-black rounded-full mb-1">
+                <QrCode className="w-3.5 h-3.5" />
+                <span>{settings?.store_name || "LA Fried Chicken"}</span>
+              </span>
+              <h3 className="text-base font-extrabold text-gray-800">
+                Scan QRIS Pembayaran
+              </h3>
+            </div>
+
+            {/* Big Amount Badge */}
+            <div className="bg-gradient-to-r from-rose-500 to-pink-500 text-white w-full py-2.5 px-4 rounded-2xl shadow-md shadow-rose-200 mb-3">
+              <span className="text-[11px] font-medium opacity-90 block">Total Tagihan:</span>
+              <span className="text-2xl font-black tracking-tight">{formatRupiah(cartTotal)}</span>
+            </div>
+
+            {/* Giant QRIS Image */}
+            <div className="w-64 h-64 sm:w-72 sm:h-72 bg-white p-3 rounded-2xl border-2 border-dashed border-rose-300 shadow-xl flex items-center justify-center mb-3">
+              <img
+                src={
+                  settings?.qris_static_image_url ||
+                  `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=LA-FRIED-CHICKEN-PAY-${cartTotal}`
+                }
+                alt="QRIS Barcode Jumbo"
+                className="w-full h-full object-contain rounded-xl"
+              />
+            </div>
+
+            <p className="text-xs text-gray-500 font-medium mb-4">
+              Arahkan kamera smartphone atau aplikasi e-wallet / mobile banking ke barcode di atas.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setIsQrisZoomOpen(false)}
+              className="w-full py-3 bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold text-xs rounded-2xl transition-all"
+            >
+              Tutup & Kembali ke Kasir
             </button>
           </div>
         </div>

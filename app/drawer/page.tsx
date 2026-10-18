@@ -236,6 +236,22 @@ export default function DrawerPage() {
                   -{formatRupiah(drawerExpenseTotal)}
                 </span>
               </div>
+
+              {/* AI Sinking Fund Quick Reminder */}
+              {cashSalesTotal > 0 && (
+                <div className="p-3 bg-gradient-to-r from-purple-50 via-pink-50 to-purple-50 rounded-2xl border border-purple-200/80 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">💡</span>
+                    <div>
+                      <span className="font-extrabold text-purple-900 block">Alokasi Amplop Sewa (10% AI):</span>
+                      <span className="text-[10px] text-purple-700">Sisihkan uang fisik ini ke amplop sewa & listrik</span>
+                    </div>
+                  </div>
+                  <span className="font-black text-purple-700 bg-white border border-purple-200 px-2.5 py-1 rounded-xl text-xs shadow-xs">
+                    Rp {Math.round(cashSalesTotal * 0.1).toLocaleString("id-ID")}
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Expected Target Cash Highlight */}

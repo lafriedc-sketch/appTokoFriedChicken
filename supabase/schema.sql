@@ -50,7 +50,40 @@ CREATE TABLE IF NOT EXISTS inventory_logs (
     change_qty NUMERIC(12, 2) NOT NULL,
     type TEXT NOT NULL CHECK (type IN ('in', 'out', 'opname')),
     cost_total NUMERIC(12, 2) NOT NULL DEFAULT 0,
-    payment_source TEXT NOT NULL CHECK (payment_source IN ('drawer', 'other')),
+    payment_source TEXT NOT NULL CHECK (payment_source IN ('drawer', 'other', 'system_fifo')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+-- Migration safety for payment_source check constraint
+ALTER TABLE inventory_logs DROP CONSTRAINT IF EXISTS inventory_logs_payment_source_check;
+ALTER TABLE inventory_logs ADD CONSTRAINT inventory_logs_payment_source_check CHECK (payment_source IN ('drawer', 'other', 'system_fifo'));
+
+-- Tabel Batch Persediaan Bahan Baku (FIFO)
+CREATE TABLE IF NOT EXISTS inventory_batches (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    inventory_item_id UUID REFERENCES inventory_items(id) ON DELETE CASCADE,
+    batch_date TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    initial_qty NUMERIC(12, 2) NOT NULL,
+    remaining_qty NUMERIC(12, 2) NOT NULL,
+    cost_per_unit NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+-- Tabel Resep Produk (Hubungan Produk dengan Bahan Baku)
+CREATE TABLE IF NOT EXISTS product_recipes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    product_id UUID REFERENCES products(id) ON DELETE CASCADE,
+    inventory_item_id UUID REFERENCES inventory_items(id) ON DELETE CASCADE,
+    qty_required NUMERIC(12, 2) NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+-- Tabel Resep Varian / Saus Addon (BOM Addon)
+CREATE TABLE IF NOT EXISTS addon_recipes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    addon_id UUID REFERENCES product_addons(id) ON DELETE CASCADE,
+    inventory_item_id UUID REFERENCES inventory_items(id) ON DELETE CASCADE,
+    qty_required NUMERIC(12, 2) NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
@@ -122,6 +155,9 @@ CREATE TABLE IF NOT EXISTS store_settings (
 ALTER TABLE products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE product_addons ENABLE ROW LEVEL SECURITY;
 ALTER TABLE inventory_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inventory_batches ENABLE ROW LEVEL SECURITY;
+ALTER TABLE product_recipes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE addon_recipes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE inventory_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE frying_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
@@ -133,6 +169,9 @@ ALTER TABLE store_settings ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Anon full access products" ON products;
 DROP POLICY IF EXISTS "Anon full access product_addons" ON product_addons;
 DROP POLICY IF EXISTS "Anon full access inventory_items" ON inventory_items;
+DROP POLICY IF EXISTS "Anon full access inventory_batches" ON inventory_batches;
+DROP POLICY IF EXISTS "Anon full access product_recipes" ON product_recipes;
+DROP POLICY IF EXISTS "Anon full access addon_recipes" ON addon_recipes;
 DROP POLICY IF EXISTS "Anon full access inventory_logs" ON inventory_logs;
 DROP POLICY IF EXISTS "Anon full access frying_logs" ON frying_logs;
 DROP POLICY IF EXISTS "Anon full access transactions" ON transactions;
@@ -144,6 +183,9 @@ DROP POLICY IF EXISTS "Anon full access store_settings" ON store_settings;
 CREATE POLICY "Anon full access products" ON products FOR ALL TO anon USING (true) WITH CHECK (true);
 CREATE POLICY "Anon full access product_addons" ON product_addons FOR ALL TO anon USING (true) WITH CHECK (true);
 CREATE POLICY "Anon full access inventory_items" ON inventory_items FOR ALL TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "Anon full access inventory_batches" ON inventory_batches FOR ALL TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "Anon full access product_recipes" ON product_recipes FOR ALL TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "Anon full access addon_recipes" ON addon_recipes FOR ALL TO anon USING (true) WITH CHECK (true);
 CREATE POLICY "Anon full access inventory_logs" ON inventory_logs FOR ALL TO anon USING (true) WITH CHECK (true);
 CREATE POLICY "Anon full access frying_logs" ON frying_logs FOR ALL TO anon USING (true) WITH CHECK (true);
 CREATE POLICY "Anon full access transactions" ON transactions FOR ALL TO anon USING (true) WITH CHECK (true);
@@ -155,6 +197,9 @@ CREATE POLICY "Anon full access store_settings" ON store_settings FOR ALL TO ano
 CREATE POLICY "Auth full access products" ON products FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Auth full access product_addons" ON product_addons FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Auth full access inventory_items" ON inventory_items FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Auth full access inventory_batches" ON inventory_batches FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Auth full access product_recipes" ON product_recipes FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Auth full access addon_recipes" ON addon_recipes FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Auth full access inventory_logs" ON inventory_logs FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Auth full access frying_logs" ON frying_logs FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Auth full access transactions" ON transactions FOR ALL TO authenticated USING (true) WITH CHECK (true);

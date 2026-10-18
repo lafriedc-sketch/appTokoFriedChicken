@@ -37,7 +37,10 @@ import {
   ChevronRight,
   Percent,
   Tag,
-  Calculator
+  Calculator,
+  CookingPot,
+  Package,
+  Box
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { Product, ProductAddon, InventoryItem, StoreSettings, CashierUser, Transaction, CashierActivityLog, PromoItemComponent } from "@/types";
@@ -62,6 +65,9 @@ export default function AdminPage() {
     admin_pin: "1234",
   });
   const [newPin, setNewPin] = useState("");
+  const [adminMonthlyRent, setAdminMonthlyRent] = useState<number>(1500000);
+  const [adminMonthlyElectricity, setAdminMonthlyElectricity] = useState<number>(300000);
+  const [adminRentDueDay, setAdminRentDueDay] = useState<number>(25);
   const [products, setProducts] = useState<Product[]>([]);
   const [addons, setAddons] = useState<ProductAddon[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
@@ -115,6 +121,275 @@ export default function AdminPage() {
     promo_items: [],
   });
   const [isEditingProduct, setIsEditingProduct] = useState(false);
+
+  // State BOM (Bill of Materials) & Packaging
+  const [mainIngredients, setMainIngredients] = useState<{
+    id?: string;
+    inventory_item_id: string;
+    qty_required: number | string;
+    selected_unit?: string;
+  }[]>([]);
+  const [packagingItems, setPackagingItems] = useState<{
+    id?: string;
+    inventory_item_id: string;
+    qty_required: number | string;
+    selected_unit?: string;
+  }[]>([]);
+  const [isLoadingRecipes, setIsLoadingRecipes] = useState(false);
+  const [productRecipesMap, setProductRecipesMap] = useState<Record<string, number>>({});
+
+  // State BOM (Bill of Materials) & Packaging untuk Addon (Saus / Pelengkap)
+  const [addonMainIngredients, setAddonMainIngredients] = useState<{
+    id?: string;
+    inventory_item_id: string;
+    qty_required: number | string;
+    selected_unit?: string;
+  }[]>([]);
+  const [addonPackagingItems, setAddonPackagingItems] = useState<{
+    id?: string;
+    inventory_item_id: string;
+    qty_required: number | string;
+    selected_unit?: string;
+  }[]>([]);
+  const [isLoadingAddonRecipes, setIsLoadingAddonRecipes] = useState(false);
+  const [addonRecipesMap, setAddonRecipesMap] = useState<Record<string, number>>({});
+
+  // Helper deteksi kategori kemasan/packaging
+  const isPackagingItem = (name: string) => {
+    const lower = (name || "").toLowerCase();
+    return (
+      lower.includes("box") ||
+      lower.includes("cup") ||
+      lower.includes("kresek") ||
+      lower.includes("kantong") ||
+      lower.includes("kemasan") ||
+      lower.includes("plastik") ||
+      lower.includes("bungkus") ||
+      lower.includes("paper") ||
+      lower.includes("pack") ||
+      lower.includes("sedotan") ||
+      lower.includes("wadah")
+    );
+  };
+
+  // Helper opsi satuan kompatibel berdasarkan satuan master bahan
+  const getCompatibleUnits = (baseUnit: string = ""): string[] => {
+    const u = (baseUnit || "").toLowerCase().trim();
+    if (u === "kg" || u === "gram" || u === "gr" || u === "g") {
+      return ["gram", "kg"];
+    }
+    if (u === "liter" || u === "l" || u === "ml") {
+      return ["ml", "liter"];
+    }
+    return [baseUnit || "pcs"];
+  };
+
+  // Helper konversi qty input ke satuan master database
+  const convertToDatabaseUnit = (inputQty: number, selectedUnit: string, baseUnit: string): number => {
+    const sUnit = (selectedUnit || "").toLowerCase().trim();
+    const bUnit = (baseUnit || "").toLowerCase().trim();
+
+    // Kasus Berat
+    if (bUnit === "kg" && (sUnit === "gram" || sUnit === "gr" || sUnit === "g")) {
+      return Number((inputQty / 1000).toFixed(6));
+    }
+    if ((bUnit === "gram" || bUnit === "gr" || bUnit === "g") && sUnit === "kg") {
+      return Number((inputQty * 1000).toFixed(6));
+    }
+
+    // Kasus Cairan
+    if ((bUnit === "liter" || bUnit === "l") && sUnit === "ml") {
+      return Number((inputQty / 1000).toFixed(6));
+    }
+    if (bUnit === "ml" && (sUnit === "liter" || sUnit === "l")) {
+      return Number((inputQty * 1000).toFixed(6));
+    }
+
+    return inputQty;
+  };
+
+  // Helper teks preview konversi
+  const getConversionPreviewText = (inputQty: number | string, selectedUnit: string, baseUnit: string): string | null => {
+    const qty = Number(inputQty);
+    if (!qty || isNaN(qty)) return null;
+
+    const sUnit = (selectedUnit || "").toLowerCase().trim();
+    const bUnit = (baseUnit || "").toLowerCase().trim();
+
+    if (bUnit === "kg" && (sUnit === "gram" || sUnit === "gr" || sUnit === "g")) {
+      const inKg = qty / 1000;
+      return `(= ${inKg} kg)`;
+    }
+    if ((bUnit === "gram" || bUnit === "gr" || bUnit === "g") && sUnit === "kg") {
+      const inGr = qty * 1000;
+      return `(= ${inGr.toLocaleString("id-ID")} gram)`;
+    }
+    if ((bUnit === "liter" || bUnit === "l") && sUnit === "ml") {
+      const inL = qty / 1000;
+      return `(= ${inL} liter)`;
+    }
+    if (bUnit === "ml" && (sUnit === "liter" || sUnit === "l")) {
+      const inMl = qty * 1000;
+      return `(= ${inMl.toLocaleString("id-ID")} ml)`;
+    }
+    return null;
+  };
+
+  // Handlers untuk Komposisi Bahan Utama
+  const handleAddMainIngredient = () => {
+    const firstMain = inventoryItems.find((it) => !isPackagingItem(it.name));
+    const compUnits = getCompatibleUnits(firstMain?.unit);
+    setMainIngredients((prev) => [
+      ...prev,
+      {
+        inventory_item_id: firstMain?.id || "",
+        qty_required: 1,
+        selected_unit: compUnits[0] || firstMain?.unit || "",
+      },
+    ]);
+  };
+
+  const handleUpdateMainIngredient = (
+    index: number,
+    field: "inventory_item_id" | "qty_required" | "selected_unit",
+    value: any,
+    extraUnit?: string
+  ) => {
+    setMainIngredients((prev) => {
+      const next = [...prev];
+      if (field === "inventory_item_id") {
+        next[index] = {
+          ...next[index],
+          inventory_item_id: value,
+          selected_unit: extraUnit || next[index].selected_unit,
+        };
+      } else {
+        next[index] = { ...next[index], [field]: value };
+      }
+      return next;
+    });
+  };
+
+  const handleRemoveMainIngredient = (index: number) => {
+    setMainIngredients((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // Handlers untuk Packaging / Kemasan
+  const handleAddPackagingItem = () => {
+    const firstPack = inventoryItems.find((it) => isPackagingItem(it.name));
+    const compUnits = getCompatibleUnits(firstPack?.unit);
+    setPackagingItems((prev) => [
+      ...prev,
+      {
+        inventory_item_id: firstPack?.id || "",
+        qty_required: 1,
+        selected_unit: compUnits[0] || firstPack?.unit || "",
+      },
+    ]);
+  };
+
+  const handleUpdatePackagingItem = (
+    index: number,
+    field: "inventory_item_id" | "qty_required" | "selected_unit",
+    value: any,
+    extraUnit?: string
+  ) => {
+    setPackagingItems((prev) => {
+      const next = [...prev];
+      if (field === "inventory_item_id") {
+        next[index] = {
+          ...next[index],
+          inventory_item_id: value,
+          selected_unit: extraUnit || next[index].selected_unit,
+        };
+      } else {
+        next[index] = { ...next[index], [field]: value };
+      }
+      return next;
+    });
+  };
+
+  const handleRemovePackagingItem = (index: number) => {
+    setPackagingItems((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // Handlers untuk Komposisi Bahan Utama Addon
+  const handleAddAddonMainIngredient = () => {
+    const firstMain = inventoryItems.find((it) => !isPackagingItem(it.name));
+    const compUnits = getCompatibleUnits(firstMain?.unit);
+    setAddonMainIngredients((prev) => [
+      ...prev,
+      {
+        inventory_item_id: firstMain?.id || "",
+        qty_required: 1,
+        selected_unit: compUnits[0] || firstMain?.unit || "",
+      },
+    ]);
+  };
+
+  const handleUpdateAddonMainIngredient = (
+    index: number,
+    field: "inventory_item_id" | "qty_required" | "selected_unit",
+    value: any,
+    extraUnit?: string
+  ) => {
+    setAddonMainIngredients((prev) => {
+      const next = [...prev];
+      if (field === "inventory_item_id") {
+        next[index] = {
+          ...next[index],
+          inventory_item_id: value,
+          selected_unit: extraUnit || next[index].selected_unit,
+        };
+      } else {
+        next[index] = { ...next[index], [field]: value };
+      }
+      return next;
+    });
+  };
+
+  const handleRemoveAddonMainIngredient = (index: number) => {
+    setAddonMainIngredients((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // Handlers untuk Packaging / Kemasan Addon
+  const handleAddAddonPackagingItem = () => {
+    const firstPack = inventoryItems.find((it) => isPackagingItem(it.name));
+    const compUnits = getCompatibleUnits(firstPack?.unit);
+    setAddonPackagingItems((prev) => [
+      ...prev,
+      {
+        inventory_item_id: firstPack?.id || "",
+        qty_required: 1,
+        selected_unit: compUnits[0] || firstPack?.unit || "",
+      },
+    ]);
+  };
+
+  const handleUpdateAddonPackagingItem = (
+    index: number,
+    field: "inventory_item_id" | "qty_required" | "selected_unit",
+    value: any,
+    extraUnit?: string
+  ) => {
+    setAddonPackagingItems((prev) => {
+      const next = [...prev];
+      if (field === "inventory_item_id") {
+        next[index] = {
+          ...next[index],
+          inventory_item_id: value,
+          selected_unit: extraUnit || next[index].selected_unit,
+        };
+      } else {
+        next[index] = { ...next[index], [field]: value };
+      }
+      return next;
+    });
+  };
+
+  const handleRemoveAddonPackagingItem = (index: number) => {
+    setAddonPackagingItems((prev) => prev.filter((_, i) => i !== index));
+  };
 
   // Helper: Daftar produk alacarte (menu satuan) untuk dikombinasikan ke promo
   const alacarteProducts = useMemo(() => {
@@ -224,6 +499,19 @@ export default function AdminPage() {
         setSettings(sData);
       }
 
+      // Load Rent Settings untuk AI Advisor
+      if (typeof window !== "undefined") {
+        try {
+          const rentJson = localStorage.getItem("la_rent_settings");
+          if (rentJson) {
+            const parsed = JSON.parse(rentJson);
+            if (parsed.monthly_rent) setAdminMonthlyRent(parsed.monthly_rent);
+            if (parsed.monthly_electricity) setAdminMonthlyElectricity(parsed.monthly_electricity);
+            if (parsed.rent_due_day) setAdminRentDueDay(parsed.rent_due_day);
+          }
+        } catch {}
+      }
+
       // 2. Products
       const { data: pData } = await supabase
         .from("products")
@@ -264,6 +552,38 @@ export default function AdminPage() {
         .select("*")
         .order("name", { ascending: true });
       if (iData) setInventoryItems(iData);
+
+      // 4b. Fetch Product Recipes Count untuk indikator BOM katalog
+      try {
+        const { data: recData } = await supabase
+          .from("product_recipes")
+          .select("id, product_id");
+        if (recData) {
+          const countMap: Record<string, number> = {};
+          recData.forEach((r) => {
+            countMap[r.product_id] = (countMap[r.product_id] || 0) + 1;
+          });
+          setProductRecipesMap(countMap);
+        }
+      } catch (e) {
+        console.warn("Gagal load hitungan resep produk:", e);
+      }
+
+      // 4c. Fetch Addon Recipes Count untuk indikator BOM katalog varian saus
+      try {
+        const { data: aRecData } = await supabase
+          .from("addon_recipes")
+          .select("id, addon_id");
+        if (aRecData) {
+          const aCountMap: Record<string, number> = {};
+          aRecData.forEach((r) => {
+            aCountMap[r.addon_id] = (aCountMap[r.addon_id] || 0) + 1;
+          });
+          setAddonRecipesMap(aCountMap);
+        }
+      } catch (e) {
+        console.warn("Gagal load hitungan resep addon:", e);
+      }
 
       // 5. Cashier Users
       if (typeof window !== "undefined") {
@@ -515,21 +835,45 @@ export default function AdminPage() {
     showNotification(`Riwayat kasir ${cashierName} berhasil diekspor! 📥`);
   };
 
-  // UPLOAD FOTO QRIS
+  // UPLOAD FOTO QRIS DENGAN KOMPRESI OTOMATIS (JPEG)
   const handleQrisFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 3 * 1024 * 1024) {
-      showNotification("Ukuran foto maksimal 3MB!", "error");
-      return;
-    }
-
     const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64 = reader.result as string;
-      setSettings((prev) => ({ ...prev, qris_static_image_url: base64 }));
-      showNotification("Foto barcode QRIS berhasil dipilih! Klik Simpan di bawah untuk mengaktifkan.");
+    reader.onloadend = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        // Setup Canvas untuk kompresi
+        const canvas = document.createElement("canvas");
+        const MAX_WIDTH = 800; // Lebar maksimal ideal untuk barcode
+        let width = img.width;
+        let height = img.height;
+
+        if (width > MAX_WIDTH) {
+          height = Math.round((height * MAX_WIDTH) / width);
+          width = MAX_WIDTH;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          // Isi background putih agar PNG transparan tidak jadi hitam
+          ctx.fillStyle = "#FFFFFF";
+          ctx.fillRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+
+          // Konversi hasil canvas ke JPEG dengan kualitas 80%
+          const compressedBase64 = canvas.toDataURL("image/jpeg", 0.8);
+          
+          setSettings((prev) => ({ ...prev, qris_static_image_url: compressedBase64 }));
+          showNotification("Foto barcode QRIS berhasil diproses! Klik Simpan di bawah untuk mengaktifkan.");
+        }
+      };
+      // Fallback URL jika pembacaan gagal
+      img.src = event.target?.result as string;
     };
     reader.readAsDataURL(file);
   };
@@ -541,7 +885,7 @@ export default function AdminPage() {
       setIsAuthenticated(true);
       setPinError("");
     } else {
-      setPinError("PIN salah! Masukkan PIN yang benar (default: 1234)");
+      setPinError("PIN salah! Masukkan PIN yang benar");
     }
   };
 
@@ -571,6 +915,19 @@ export default function AdminPage() {
         });
 
       if (error) throw error;
+
+      // Simpan pengaturan sewa & jatuh tempo untuk AI Advisor
+      if (typeof window !== "undefined") {
+        try {
+          const rentPayload = {
+            monthly_rent: Number(adminMonthlyRent) || 1500000,
+            monthly_electricity: Number(adminMonthlyElectricity) || 300000,
+            rent_due_day: Math.min(31, Math.max(1, Number(adminRentDueDay) || 25)),
+          };
+          localStorage.setItem("la_rent_settings", JSON.stringify(rentPayload));
+        } catch {}
+      }
+
       showNotification("Pengaturan profil berhasil disimpan! 🌸");
       setNewPin("");
       fetchAllData();
@@ -656,6 +1013,50 @@ export default function AdminPage() {
         } catch {}
       }
 
+      // Simpan seluruh data dari kedua kelompok (Bahan Utama + Packaging) ke tabel product_recipes
+      if (savedId) {
+        try {
+          const combinedRecipes = [...mainIngredients, ...packagingItems];
+          const validRecipes = combinedRecipes.filter(
+            (r) => r.inventory_item_id && Number(r.qty_required) > 0
+          );
+
+          // Hapus resep lama untuk product_id ini
+          await supabase
+            .from("product_recipes")
+            .delete()
+            .eq("product_id", savedId);
+
+          // Insert data resep gabungan baru (dikonversi ke satuan dasar gudang)
+          if (validRecipes.length > 0) {
+            const recipePayload = validRecipes.map((r) => {
+              const inv = inventoryItems.find((it) => it.id === r.inventory_item_id);
+              const baseUnit = inv?.unit || "";
+              const selectedUnit = r.selected_unit || baseUnit;
+              const convertedQty = convertToDatabaseUnit(Number(r.qty_required), selectedUnit, baseUnit);
+
+              return {
+                product_id: savedId,
+                inventory_item_id: r.inventory_item_id,
+                qty_required: convertedQty,
+              };
+            });
+
+            const { error: recInsertErr } = await supabase
+              .from("product_recipes")
+              .insert(recipePayload);
+
+            if (recInsertErr) {
+              console.error("Gagal simpan product_recipes:", recInsertErr);
+            }
+          }
+        } catch (bomErr) {
+          console.error("Error saat menyimpan BOM resep:", bomErr);
+        }
+      }
+
+      setMainIngredients([]);
+      setPackagingItems([]);
       setProductForm({
         id: "",
         name: "",
@@ -671,6 +1072,89 @@ export default function AdminPage() {
       fetchAllData();
     } catch (err: any) {
       showNotification(err.message || "Gagal menyimpan menu", "error");
+    }
+  };
+
+  // EDIT PRODUK: FETCH DATA RESEP DARI product_recipes BERDASARKAN product_id
+  const handleStartEditProduct = async (p: Product) => {
+    setIsEditingProduct(true);
+    setProductForm({
+      id: p.id,
+      name: p.name,
+      category: p.category,
+      price: p.price,
+      is_available: p.is_available,
+      icon_or_image_url: p.icon_or_image_url || (p.category === "Promo" ? "🔥" : "🍗"),
+      original_price: p.original_price || 0,
+      discount_percent: p.discount_percent || 20,
+      promo_items: p.promo_items || [],
+    });
+
+    // Lakukan fetch data dari product_recipes berdasarkan product_id
+    setIsLoadingRecipes(true);
+    try {
+      const { data: recData, error: recErr } = await supabase
+        .from("product_recipes")
+        .select(`
+          id,
+          product_id,
+          inventory_item_id,
+          qty_required
+        `)
+        .eq("product_id", p.id);
+
+      if (recErr) {
+        console.error("Gagal load resep produk:", recErr);
+      }
+
+      const mainList: { id?: string; inventory_item_id: string; qty_required: number | string; selected_unit?: string }[] = [];
+      const packList: { id?: string; inventory_item_id: string; qty_required: number | string; selected_unit?: string }[] = [];
+
+      (recData || []).forEach((r) => {
+        const inv = inventoryItems.find((it) => it.id === r.inventory_item_id);
+        const itemName = inv?.name || "";
+        const baseUnit = (inv?.unit || "").toLowerCase().trim();
+        const rawQty = Number(r.qty_required || 0);
+
+        let displayQty: number | string = rawQty;
+        let selectedUnit = inv?.unit || "";
+
+        // Jika satuan dasar kg tapi takarannya < 1, tampilkan dalam gram agar mudah dibaca
+        if (baseUnit === "kg" && rawQty > 0 && rawQty < 1) {
+          displayQty = Number((rawQty * 1000).toFixed(4));
+          selectedUnit = "gram";
+        } else if ((baseUnit === "liter" || baseUnit === "l") && rawQty > 0 && rawQty < 1) {
+          displayQty = Number((rawQty * 1000).toFixed(4));
+          selectedUnit = "ml";
+        }
+
+        const itemObj = {
+          id: r.id,
+          inventory_item_id: r.inventory_item_id,
+          qty_required: displayQty,
+          selected_unit: selectedUnit,
+        };
+
+        if (isPackagingItem(itemName)) {
+          packList.push(itemObj);
+        } else {
+          mainList.push(itemObj);
+        }
+      });
+
+      setMainIngredients(mainList);
+      setPackagingItems(packList);
+    } catch (err) {
+      console.error("Error fetching recipes on edit:", err);
+    } finally {
+      setIsLoadingRecipes(false);
+    }
+
+    if (typeof window !== "undefined") {
+      const formEl = document.getElementById("admin-product-form-card");
+      if (formEl) {
+        formEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
     }
   };
 
@@ -710,32 +1194,160 @@ export default function AdminPage() {
     if (!addonForm.name.trim()) return;
 
     try {
+      let savedId = addonForm.id;
+
       if (isEditingAddon && addonForm.id) {
         const { error } = await supabase
           .from("product_addons")
           .update({
-            name: addonForm.name,
+            name: addonForm.name.trim(),
             price: Number(addonForm.price),
           })
           .eq("id", addonForm.id);
 
         if (error) throw error;
-        showNotification("Varian saus diperbarui!");
+        showNotification("Varian saus diperbarui! 🌸");
       } else {
-        const { error } = await supabase.from("product_addons").insert({
-          name: addonForm.name,
-          price: Number(addonForm.price),
-        });
+        const { data: insData, error } = await supabase
+          .from("product_addons")
+          .insert({
+            name: addonForm.name.trim(),
+            price: Number(addonForm.price),
+          })
+          .select()
+          .single();
 
         if (error) throw error;
-        showNotification("Varian saus baru ditambahkan!");
+        savedId = insData?.id || "";
+        showNotification("Varian saus baru ditambahkan! 🌸");
       }
 
+      // Simpan seluruh data dari kedua kelompok (Bahan Utama + Packaging) ke tabel addon_recipes
+      if (savedId) {
+        try {
+          const combinedRecipes = [...addonMainIngredients, ...addonPackagingItems];
+          const validRecipes = combinedRecipes.filter(
+            (r) => r.inventory_item_id && Number(r.qty_required) > 0
+          );
+
+          // Hapus resep lama untuk addon_id ini
+          await supabase
+            .from("addon_recipes")
+            .delete()
+            .eq("addon_id", savedId);
+
+          // Insert data resep gabungan baru (dikonversi ke satuan dasar gudang)
+          if (validRecipes.length > 0) {
+            const recipePayload = validRecipes.map((r) => {
+              const inv = inventoryItems.find((it) => it.id === r.inventory_item_id);
+              const baseUnit = inv?.unit || "";
+              const selectedUnit = r.selected_unit || baseUnit;
+              const convertedQty = convertToDatabaseUnit(Number(r.qty_required), selectedUnit, baseUnit);
+
+              return {
+                addon_id: savedId,
+                inventory_item_id: r.inventory_item_id,
+                qty_required: convertedQty,
+              };
+            });
+
+            const { error: recInsertErr } = await supabase
+              .from("addon_recipes")
+              .insert(recipePayload);
+
+            if (recInsertErr) {
+              console.error("Gagal simpan addon_recipes:", recInsertErr);
+            }
+          }
+        } catch (bomErr) {
+          console.error("Error saat menyimpan BOM addon:", bomErr);
+        }
+      }
+
+      setAddonMainIngredients([]);
+      setAddonPackagingItems([]);
       setAddonForm({ id: "", name: "", price: 0 });
       setIsEditingAddon(false);
       fetchAllData();
     } catch (err: any) {
       showNotification(err.message || "Gagal menyimpan varian", "error");
+    }
+  };
+
+  // EDIT VARIAN SAUS: FETCH DATA RESEP DARI addon_recipes BERDASARKAN addon_id
+  const handleStartEditAddon = async (a: ProductAddon) => {
+    setIsEditingAddon(true);
+    setAddonForm({
+      id: a.id,
+      name: a.name,
+      price: a.price,
+    });
+
+    // Lakukan fetch data dari addon_recipes berdasarkan addon_id
+    setIsLoadingAddonRecipes(true);
+    try {
+      const { data: recData, error: recErr } = await supabase
+        .from("addon_recipes")
+        .select(`
+          id,
+          addon_id,
+          inventory_item_id,
+          qty_required
+        `)
+        .eq("addon_id", a.id);
+
+      if (recErr) {
+        console.error("Gagal load resep varian saus:", recErr);
+      }
+
+      const mainList: { id?: string; inventory_item_id: string; qty_required: number | string; selected_unit?: string }[] = [];
+      const packList: { id?: string; inventory_item_id: string; qty_required: number | string; selected_unit?: string }[] = [];
+
+      (recData || []).forEach((r) => {
+        const inv = inventoryItems.find((it) => it.id === r.inventory_item_id);
+        const itemName = inv?.name || "";
+        const baseUnit = (inv?.unit || "").toLowerCase().trim();
+        const rawQty = Number(r.qty_required || 0);
+
+        let displayQty: number | string = rawQty;
+        let selectedUnit = inv?.unit || "";
+
+        // Jika satuan dasar kg tapi takarannya < 1, tampilkan dalam gram agar mudah dibaca
+        if (baseUnit === "kg" && rawQty > 0 && rawQty < 1) {
+          displayQty = Number((rawQty * 1000).toFixed(4));
+          selectedUnit = "gram";
+        } else if ((baseUnit === "liter" || baseUnit === "l") && rawQty > 0 && rawQty < 1) {
+          displayQty = Number((rawQty * 1000).toFixed(4));
+          selectedUnit = "ml";
+        }
+
+        const itemObj = {
+          id: r.id,
+          inventory_item_id: r.inventory_item_id,
+          qty_required: displayQty,
+          selected_unit: selectedUnit,
+        };
+
+        if (isPackagingItem(itemName)) {
+          packList.push(itemObj);
+        } else {
+          mainList.push(itemObj);
+        }
+      });
+
+      setAddonMainIngredients(mainList);
+      setAddonPackagingItems(packList);
+    } catch (err) {
+      console.error("Error fetching addon recipes on edit:", err);
+    } finally {
+      setIsLoadingAddonRecipes(false);
+    }
+
+    if (typeof window !== "undefined") {
+      const formEl = document.getElementById("admin-addon-form-card");
+      if (formEl) {
+        formEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
     }
   };
 
@@ -817,7 +1429,7 @@ export default function AdminPage() {
         </div>
         <h2 className="text-xl font-black text-gray-800 mb-1">Keamanan Admin Kios</h2>
         <p className="text-xs text-gray-500 mb-6">
-          Masukkan PIN keamanan untuk mengakses pengaturan harga, menu, & toko (Default: 1234).
+          Masukkan PIN keamanan untuk mengakses pengaturan harga, menu, & toko.
         </p>
 
         <div className="space-y-3">
@@ -942,7 +1554,7 @@ export default function AdminPage() {
                   maxLength={6}
                   value={adminOldPinInput}
                   onChange={(e) => setAdminOldPinInput(e.target.value)}
-                  placeholder="Ketik PIN saat ini (default: 1234)"
+                  placeholder="Ketik PIN saat ini"
                   className="w-full px-3.5 py-2.5 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-bold tracking-widest text-center focus:ring-2 focus:ring-rose-400"
                   required
                 />
@@ -1592,6 +2204,69 @@ export default function AdminPage() {
               />
             </div>
 
+            {/* Target Biaya Tetap untuk AI Financial Advisor */}
+            <div className="p-4 rounded-2xl bg-pink-50/60 border border-pink-200/80 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-base">🤖</span>
+                <div>
+                  <h3 className="font-extrabold text-xs text-gray-800">
+                    Target Biaya Tetap & Jatuh Tempo Sewa (Untuk AI Advisor)
+                  </h3>
+                  <p className="text-[10px] text-gray-500">
+                    Dipakai AI untuk menghitung rekomendasi persentase sisihan harian & uang aman yang bisa lu ambil.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">
+                    Sewa Toko / Bulan (Rp)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="50000"
+                    value={adminMonthlyRent}
+                    onChange={(e) => setAdminMonthlyRent(Number(e.target.value) || 0)}
+                    className="w-full px-3 py-2 text-xs bg-white border border-pink-200 rounded-xl font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">
+                    Token Listrik / Bulan (Rp)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="20000"
+                    value={adminMonthlyElectricity}
+                    onChange={(e) => setAdminMonthlyElectricity(Number(e.target.value) || 0)}
+                    className="w-full px-3 py-2 text-xs bg-white border border-pink-200 rounded-xl font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">
+                    Tgl Jatuh Tempo Bayar Sewa
+                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-gray-500 font-semibold">Tgl</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="31"
+                      value={adminRentDueDay}
+                      onChange={(e) => setAdminRentDueDay(Number(e.target.value) || 25)}
+                      className="w-20 px-2 py-2 text-xs font-black text-center bg-white border border-pink-200 rounded-xl text-rose-600"
+                    />
+                    <span className="text-xs text-gray-500">tiap bulan</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Change Admin PIN */}
             <div className="pt-3 border-t border-pink-100">
               <label className="block text-xs font-bold text-gray-700 mb-1 flex items-center gap-1.5">
@@ -1623,7 +2298,7 @@ export default function AdminPage() {
       {activeTab === "products" && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           {/* Form Create/Edit */}
-          <div className="lg:col-span-5 bg-white rounded-3xl p-5 shadow-sm border border-pink-100">
+          <div id="admin-product-form-card" className="lg:col-span-5 bg-white rounded-3xl p-5 shadow-sm border border-pink-100">
             <h2 className="text-sm font-extrabold text-gray-800 mb-3 flex items-center justify-between">
               <span>{isEditingProduct ? "Edit Menu Produk" : "Tambah Menu Baru"}</span>
               {isEditingProduct && (
@@ -1631,6 +2306,8 @@ export default function AdminPage() {
                   type="button"
                   onClick={() => {
                     setIsEditingProduct(false);
+                    setMainIngredients([]);
+                    setPackagingItems([]);
                     setProductForm({
                       id: "",
                       name: "",
@@ -1663,38 +2340,117 @@ export default function AdminPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">Kategori</label>
-                  <select
-                    value={productForm.category}
-                    onChange={(e) => {
-                      const newCat = e.target.value;
-                      setProductForm((prev) => ({
-                        ...prev,
-                        category: newCat,
-                        icon_or_image_url: newCat === "Promo" && prev.icon_or_image_url === "🍗" ? "🔥" : prev.icon_or_image_url,
-                      }));
-                    }}
-                    className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400 font-bold"
-                  >
-                    <option value="Ayam">Ayam</option>
-                    <option value="Paket">Paket</option>
-                    <option value="Promo">Promo 🔥</option>
-                    <option value="Makanan">Makanan</option>
-                    <option value="Minuman">Minuman</option>
-                    <option value="Lainnya">Lainnya</option>
-                  </select>
+              <div className="space-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">Kategori</label>
+                    <select
+                      value={productForm.category}
+                      onChange={(e) => {
+                        const newCat = e.target.value;
+                        setProductForm((prev) => ({
+                          ...prev,
+                          category: newCat,
+                          icon_or_image_url: newCat === "Promo" && prev.icon_or_image_url === "🍗" ? "🔥" : prev.icon_or_image_url,
+                        }));
+                      }}
+                      className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400 font-bold"
+                    >
+                      <option value="Ayam">Ayam</option>
+                      <option value="Paket">Paket</option>
+                      <option value="Promo">Promo 🔥</option>
+                      <option value="Makanan">Makanan</option>
+                      <option value="Minuman">Minuman</option>
+                      <option value="Lainnya">Lainnya</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">
+                      Pilihan Cepat Ikon
+                    </label>
+                    <select
+                      value={["🍗", "🥩", "🍱", "🥤", "🍚", "🍟", "🍔", "🔥", "🎉", "🌶️", "🧀", "🌭", "🍵", "🧃"].includes(productForm.icon_or_image_url) ? productForm.icon_or_image_url : "custom"}
+                      onChange={(e) => {
+                        if (e.target.value !== "custom") {
+                          setProductForm({ ...productForm, icon_or_image_url: e.target.value });
+                        }
+                      }}
+                      className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400 font-bold"
+                    >
+                      <option value="🍗">🍗 Ayam Krispi</option>
+                      <option value="🥩">🥩 Daging / Steak</option>
+                      <option value="🍱">🍱 Paket Bento / Nasi</option>
+                      <option value="🥤">🥤 Minuman Segar / Es</option>
+                      <option value="🍚">🍚 Nasi Putih</option>
+                      <option value="🍟">🍟 Kentang Goreng</option>
+                      <option value="🍔">🍔 Burger Crispy</option>
+                      <option value="🔥">🔥 Promo Panas</option>
+                      <option value="🎉">🎉 Promo Spesial</option>
+                      <option value="🌶️">🌶️ Sambal Geprek / Pedas</option>
+                      <option value="🧀">🧀 Saus Keju</option>
+                      <option value="🌭">🌭 Sosis Bakar/Goreng</option>
+                      <option value="🍵">🍵 Teh Hangat</option>
+                      <option value="🧃">🧃 Jus / Kotak</option>
+                      <option value="custom">✏️ Kustom / Input Sendiri</option>
+                    </select>
+                  </div>
                 </div>
 
+                {/* Input Text & Preview Icon Dinamis */}
                 <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">Ikon / Emoji</label>
-                  <input
-                    type="text"
-                    value={productForm.icon_or_image_url || "🍗"}
-                    onChange={(e) => setProductForm({ ...productForm, icon_or_image_url: e.target.value })}
-                    className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl text-center"
-                  />
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-gray-700">
+                      Icon/Emoji (Contoh: 🍗, 🥩, 🍱, 🥤)
+                    </label>
+                    <span className="text-[10px] text-gray-400 font-medium">Bisa emoji atau link URL gambar</span>
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    {/* Live Animated Preview */}
+                    <div className="w-10 h-10 rounded-xl bg-pink-100/80 border border-pink-200 flex items-center justify-center shrink-0 shadow-2xs group">
+                      {productForm.icon_or_image_url?.startsWith("http") ? (
+                        <img
+                          src={productForm.icon_or_image_url}
+                          alt="preview"
+                          className="w-7 h-7 object-cover rounded-lg group-hover:scale-110 transition-transform"
+                        />
+                      ) : (
+                        <span className="text-xl inline-block hover:scale-125 transition-transform duration-200 animate-pulse">
+                          {productForm.icon_or_image_url || "🍗"}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Text Input */}
+                    <input
+                      type="text"
+                      placeholder="Contoh: 🍗, 🥩, 🍱, 🥤 atau URL gambar..."
+                      value={productForm.icon_or_image_url}
+                      onChange={(e) => setProductForm({ ...productForm, icon_or_image_url: e.target.value })}
+                      className="flex-1 px-3.5 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400 font-medium"
+                    />
+                  </div>
+
+                  {/* Quick Click Badges */}
+                  <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                    <span className="text-[10px] font-bold text-gray-400 mr-1">Klik Cepat:</span>
+                    {["🍗", "🥩", "🍱", "🥤", "🍚", "🍟", "🍔", "🔥", "🎉", "🌶️"].map((emoji) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        onClick={() => setProductForm({ ...productForm, icon_or_image_url: emoji })}
+                        className={`w-7 h-7 rounded-lg text-sm flex items-center justify-center transition-all ${
+                          productForm.icon_or_image_url === emoji
+                            ? "bg-rose-500 text-white scale-110 shadow-xs border border-rose-600"
+                            : "bg-white hover:bg-pink-100 border border-pink-200 hover:scale-105"
+                        }`}
+                        title={`Pilih ${emoji}`}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -1890,6 +2646,267 @@ export default function AdminPage() {
                 </label>
               </div>
 
+              {/* SEKSI BILL OF MATERIALS (BOM) & PACKAGING */}
+              <div className="border border-pink-200/90 rounded-2xl p-3.5 bg-gradient-to-b from-pink-50/50 via-white to-pink-50/30 space-y-3.5 shadow-2xs">
+                <div className="flex items-center justify-between pb-2 border-b border-pink-100">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-rose-500 text-white flex items-center justify-center shadow-xs">
+                      <CookingPot className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-black text-gray-800 flex items-center gap-1.5">
+                        <span>Resep & Bill of Materials (BOM)</span>
+                        <span className="text-[10px] font-bold text-rose-600 bg-rose-50 border border-rose-200 px-2 py-0.2 rounded-full">
+                          FIFO Terhubung
+                        </span>
+                      </h3>
+                      <p className="text-[10px] text-gray-500">
+                        Takaran bahan baku dan kemasan yang otomatis dipotong saat menu terjual di kasir.
+                      </p>
+                    </div>
+                  </div>
+                  {isLoadingRecipes && (
+                    <span className="text-[10px] text-rose-500 font-bold animate-pulse">
+                      Memuat resep...
+                    </span>
+                  )}
+                </div>
+
+                {/* KELOMPOK A: KOMPOSISI BAHAN UTAMA */}
+                <div className="space-y-2 bg-white/90 rounded-xl p-3 border border-pink-100 shadow-2xs">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-5 h-5 rounded-md bg-rose-500 text-white font-black text-[10px] flex items-center justify-center shadow-2xs">
+                        A
+                      </span>
+                      <span className="text-xs font-black text-gray-800">
+                        Komposisi Bahan Utama
+                      </span>
+                      <span className="text-[10px] text-gray-400 font-medium">
+                        (Ayam, Beras, Minuman, dll.)
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAddMainIngredient}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-rose-600 bg-pink-50 hover:bg-rose-100 border border-pink-200 rounded-lg transition-all"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>Tambah Bahan</span>
+                    </button>
+                  </div>
+
+                  {mainIngredients.length === 0 ? (
+                    <div className="py-2.5 text-center text-[11px] text-gray-400 bg-pink-50/30 rounded-lg border border-dashed border-pink-200">
+                      Belum ada bahan utama. Klik <strong className="text-rose-500 font-semibold">+ Tambah Bahan</strong> jika menu ini memakai stok bahan baku.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {mainIngredients.map((row, idx) => {
+                        const selectedItem = inventoryItems.find((it) => it.id === row.inventory_item_id);
+                        const baseUnit = selectedItem?.unit || "";
+                        const compatibleUnits = getCompatibleUnits(baseUnit);
+                        const curUnit = row.selected_unit || compatibleUnits[0] || baseUnit || "pcs";
+                        const previewText = getConversionPreviewText(row.qty_required, curUnit, baseUnit);
+
+                        return (
+                          <div
+                            key={idx}
+                            className="flex items-center gap-2 p-2 bg-pink-50/30 rounded-xl border border-pink-100 hover:border-pink-300 transition-all text-xs"
+                          >
+                            {/* Dropdown Bahan Utama */}
+                            <div className="flex-1 min-w-0">
+                              <select
+                                value={row.inventory_item_id}
+                                onChange={(e) => {
+                                  const newId = e.target.value;
+                                  const targetInv = inventoryItems.find((it) => it.id === newId);
+                                  const defUnit = getCompatibleUnits(targetInv?.unit)[0] || targetInv?.unit || "";
+                                  handleUpdateMainIngredient(idx, "inventory_item_id", newId, defUnit);
+                                }}
+                                className="w-full px-2.5 py-1.5 text-xs bg-white border border-pink-200 rounded-lg font-semibold text-gray-700 focus:ring-2 focus:ring-rose-400 truncate"
+                              >
+                                <option value="">-- Pilih Bahan Baku --</option>
+                                {inventoryItems.map((it) => (
+                                  <option key={it.id} value={it.id}>
+                                    {it.name} (Satuan: {it.unit})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Input Qty Required & Satuan Resep */}
+                            <div className="flex flex-col items-end shrink-0">
+                              <div className="flex items-center bg-white border border-pink-200 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-rose-400">
+                                <input
+                                  type="number"
+                                  step="any"
+                                  min="0.0001"
+                                  placeholder="Qty"
+                                  value={row.qty_required || ""}
+                                  onChange={(e) => handleUpdateMainIngredient(idx, "qty_required", e.target.value)}
+                                  className="w-20 px-2 py-1.5 text-xs font-bold text-gray-800 text-right outline-none"
+                                  required
+                                />
+                                {compatibleUnits.length > 1 ? (
+                                  <select
+                                    value={curUnit}
+                                    onChange={(e) => handleUpdateMainIngredient(idx, "selected_unit", e.target.value)}
+                                    className="px-2 py-1.5 text-[10px] font-bold text-rose-600 bg-pink-50 border-l border-pink-100 outline-none cursor-pointer hover:bg-pink-100 transition-colors"
+                                  >
+                                    {compatibleUnits.map((u) => (
+                                      <option key={u} value={u}>
+                                        {u}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <span className="px-2 py-1.5 text-[10px] font-bold text-gray-500 bg-pink-50 border-l border-pink-100 whitespace-nowrap min-w-[42px] text-center">
+                                    {baseUnit || "-"}
+                                  </span>
+                                )}
+                              </div>
+                              {previewText && (
+                                <span className="text-[9px] font-medium text-rose-500 mt-0.5 whitespace-nowrap">
+                                  {previewText}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Tombol Hapus */}
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveMainIngredient(idx)}
+                              className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors shrink-0"
+                              title="Hapus bahan ini"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* KELOMPOK B: PACKAGING / KEMASAN */}
+                <div className="space-y-2 bg-white/90 rounded-xl p-3 border border-amber-100 shadow-2xs">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-5 h-5 rounded-md bg-amber-500 text-white font-black text-[10px] flex items-center justify-center shadow-2xs">
+                        B
+                      </span>
+                      <span className="text-xs font-black text-gray-800">
+                        Packaging / Kemasan
+                      </span>
+                      <span className="text-[10px] text-gray-400 font-medium">
+                        (Box Kertas, Cup, Kantong, dll.)
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAddPackagingItem}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-all"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>Tambah Kemasan</span>
+                    </button>
+                  </div>
+
+                  {packagingItems.length === 0 ? (
+                    <div className="py-2.5 text-center text-[11px] text-gray-400 bg-amber-50/20 rounded-lg border border-dashed border-amber-200">
+                      Belum ada kemasan. Klik <strong className="text-amber-700 font-semibold">+ Tambah Kemasan</strong> untuk memasukkan box, cup, atau plastik.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {packagingItems.map((row, idx) => {
+                        const selectedItem = inventoryItems.find((it) => it.id === row.inventory_item_id);
+                        const baseUnit = selectedItem?.unit || "";
+                        const compatibleUnits = getCompatibleUnits(baseUnit);
+                        const curUnit = row.selected_unit || compatibleUnits[0] || baseUnit || "pcs";
+                        const previewText = getConversionPreviewText(row.qty_required, curUnit, baseUnit);
+
+                        return (
+                          <div
+                            key={idx}
+                            className="flex items-center gap-2 p-2 bg-amber-50/20 rounded-xl border border-amber-100 hover:border-amber-300 transition-all text-xs"
+                          >
+                            {/* Dropdown Kemasan */}
+                            <div className="flex-1 min-w-0">
+                              <select
+                                value={row.inventory_item_id}
+                                onChange={(e) => {
+                                  const newId = e.target.value;
+                                  const targetInv = inventoryItems.find((it) => it.id === newId);
+                                  const defUnit = getCompatibleUnits(targetInv?.unit)[0] || targetInv?.unit || "";
+                                  handleUpdatePackagingItem(idx, "inventory_item_id", newId, defUnit);
+                                }}
+                                className="w-full px-2.5 py-1.5 text-xs bg-white border border-amber-200 rounded-lg font-semibold text-gray-700 focus:ring-2 focus:ring-amber-400 truncate"
+                              >
+                                <option value="">-- Pilih Kemasan / Wadah --</option>
+                                {inventoryItems.map((it) => (
+                                  <option key={it.id} value={it.id}>
+                                    {it.name} (Satuan: {it.unit})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Input Qty Required & Satuan */}
+                            <div className="flex flex-col items-end shrink-0">
+                              <div className="flex items-center bg-white border border-amber-200 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-amber-400">
+                                <input
+                                  type="number"
+                                  step="any"
+                                  min="0.0001"
+                                  placeholder="Qty"
+                                  value={row.qty_required || ""}
+                                  onChange={(e) => handleUpdatePackagingItem(idx, "qty_required", e.target.value)}
+                                  className="w-20 px-2 py-1.5 text-xs font-bold text-gray-800 text-right outline-none"
+                                  required
+                                />
+                                {compatibleUnits.length > 1 ? (
+                                  <select
+                                    value={curUnit}
+                                    onChange={(e) => handleUpdatePackagingItem(idx, "selected_unit", e.target.value)}
+                                    className="px-2 py-1.5 text-[10px] font-bold text-amber-700 bg-amber-50 border-l border-amber-100 outline-none cursor-pointer hover:bg-amber-100 transition-colors"
+                                  >
+                                    {compatibleUnits.map((u) => (
+                                      <option key={u} value={u}>
+                                        {u}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <span className="px-2 py-1.5 text-[10px] font-bold text-gray-500 bg-amber-50 border-l border-amber-100 whitespace-nowrap min-w-[42px] text-center">
+                                    {baseUnit || "-"}
+                                  </span>
+                                )}
+                              </div>
+                              {previewText && (
+                                <span className="text-[9px] font-medium text-amber-600 mt-0.5 whitespace-nowrap">
+                                  {previewText}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Tombol Hapus */}
+                            <button
+                              type="button"
+                              onClick={() => handleRemovePackagingItem(idx)}
+                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors shrink-0"
+                              title="Hapus kemasan ini"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <button
                 type="submit"
                 className="w-full py-3 bg-rose-500 text-white font-bold text-xs rounded-2xl shadow-md shadow-rose-200 hover:bg-rose-600 active:scale-95 transition-all flex items-center justify-center gap-1.5 min-h-[48px]"
@@ -1952,6 +2969,12 @@ export default function AdminPage() {
                         <span className="text-xs font-black text-rose-600">
                           {formatRupiah(p.price)}
                         </span>
+
+                        {productRecipesMap[p.id] ? (
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 bg-rose-50 text-rose-600 rounded-md border border-rose-200">
+                            🥗 {productRecipesMap[p.id]} Resep/BOM
+                          </span>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -1973,21 +2996,9 @@ export default function AdminPage() {
                     {/* Edit */}
                     <button
                       type="button"
-                      onClick={() => {
-                        setIsEditingProduct(true);
-                        setProductForm({
-                          id: p.id,
-                          name: p.name,
-                          category: p.category,
-                          price: p.price,
-                          is_available: p.is_available,
-                          icon_or_image_url: p.icon_or_image_url || (p.category === "Promo" ? "🔥" : "🍗"),
-                          original_price: p.original_price || 0,
-                          discount_percent: p.discount_percent || 20,
-                          promo_items: p.promo_items || [],
-                        });
-                      }}
+                      onClick={() => handleStartEditProduct(p)}
                       className="p-2 text-gray-500 hover:text-rose-600 hover:bg-white rounded-xl transition-colors"
+                      title="Edit menu & komposisi resep"
                     >
                       <Edit3 className="w-3.5 h-3.5" />
                     </button>
@@ -2012,7 +3023,7 @@ export default function AdminPage() {
       {activeTab === "addons" && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           {/* Addon Form */}
-          <div className="lg:col-span-5 bg-white rounded-3xl p-5 shadow-sm border border-pink-100">
+          <div id="admin-addon-form-card" className="lg:col-span-5 bg-white rounded-3xl p-5 shadow-sm border border-pink-100">
             <h2 className="text-sm font-extrabold text-gray-800 mb-3 flex items-center justify-between">
               <span>{isEditingAddon ? "Edit Saus Pelengkap" : "Tambah Saus / Pelengkap"}</span>
               {isEditingAddon && (
@@ -2020,6 +3031,8 @@ export default function AdminPage() {
                   type="button"
                   onClick={() => {
                     setIsEditingAddon(false);
+                    setAddonMainIngredients([]);
+                    setAddonPackagingItems([]);
                     setAddonForm({ id: "", name: "", price: 0 });
                   }}
                   className="text-xs text-rose-500 hover:underline font-normal"
@@ -2053,6 +3066,267 @@ export default function AdminPage() {
                 />
               </div>
 
+              {/* SEKSI BILL OF MATERIALS (BOM) & PACKAGING UNTUK VARIAN SAUS */}
+              <div className="border border-pink-200/90 rounded-2xl p-3.5 bg-gradient-to-b from-pink-50/50 via-white to-pink-50/30 space-y-3.5 shadow-2xs">
+                <div className="flex items-center justify-between pb-2 border-b border-pink-100">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-rose-500 text-white flex items-center justify-center shadow-xs">
+                      <CookingPot className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-black text-gray-800 flex items-center gap-1.5">
+                        <span>Resep & Bill of Materials (BOM)</span>
+                        <span className="text-[10px] font-bold text-rose-600 bg-rose-50 border border-rose-200 px-2 py-0.2 rounded-full">
+                          FIFO Terhubung
+                        </span>
+                      </h3>
+                      <p className="text-[10px] text-gray-500">
+                        Takaran bahan baku dan kemasan yang otomatis dipotong saat varian ini dipilih di kasir.
+                      </p>
+                    </div>
+                  </div>
+                  {isLoadingAddonRecipes && (
+                    <span className="text-[10px] text-rose-500 font-bold animate-pulse">
+                      Memuat resep...
+                    </span>
+                  )}
+                </div>
+
+                {/* KELOMPOK A: KOMPOSISI BAHAN UTAMA SAUS */}
+                <div className="space-y-2 bg-white/90 rounded-xl p-3 border border-pink-100 shadow-2xs">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-5 h-5 rounded-md bg-rose-500 text-white font-black text-[10px] flex items-center justify-center shadow-2xs">
+                        A
+                      </span>
+                      <span className="text-xs font-black text-gray-800">
+                        Komposisi Bahan Utama
+                      </span>
+                      <span className="text-[10px] text-gray-400 font-medium">
+                        (Bahan Saus, Bubuk Keju, Gula, dll.)
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAddAddonMainIngredient}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-rose-600 bg-pink-50 hover:bg-rose-100 border border-pink-200 rounded-lg transition-all"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>Tambah Bahan</span>
+                    </button>
+                  </div>
+
+                  {addonMainIngredients.length === 0 ? (
+                    <div className="py-2.5 text-center text-[11px] text-gray-400 bg-pink-50/30 rounded-lg border border-dashed border-pink-200">
+                      Belum ada bahan utama. Klik <strong className="text-rose-500 font-semibold">+ Tambah Bahan</strong> untuk menautkan bahan baku saus.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {addonMainIngredients.map((row, idx) => {
+                        const selectedItem = inventoryItems.find((it) => it.id === row.inventory_item_id);
+                        const baseUnit = selectedItem?.unit || "";
+                        const compatibleUnits = getCompatibleUnits(baseUnit);
+                        const curUnit = row.selected_unit || compatibleUnits[0] || baseUnit || "pcs";
+                        const previewText = getConversionPreviewText(row.qty_required, curUnit, baseUnit);
+
+                        return (
+                          <div
+                            key={idx}
+                            className="flex items-center gap-2 p-2 bg-pink-50/30 rounded-xl border border-pink-100 hover:border-pink-300 transition-all text-xs"
+                          >
+                            {/* Dropdown Bahan Utama */}
+                            <div className="flex-1 min-w-0">
+                              <select
+                                value={row.inventory_item_id}
+                                onChange={(e) => {
+                                  const newId = e.target.value;
+                                  const targetInv = inventoryItems.find((it) => it.id === newId);
+                                  const defUnit = getCompatibleUnits(targetInv?.unit)[0] || targetInv?.unit || "";
+                                  handleUpdateAddonMainIngredient(idx, "inventory_item_id", newId, defUnit);
+                                }}
+                                className="w-full px-2.5 py-1.5 text-xs bg-white border border-pink-200 rounded-lg font-semibold text-gray-700 focus:ring-2 focus:ring-rose-400 truncate"
+                              >
+                                <option value="">-- Pilih Bahan Baku --</option>
+                                {inventoryItems.map((it) => (
+                                  <option key={it.id} value={it.id}>
+                                    {it.name} (Satuan: {it.unit})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Input Qty Required & Satuan Resep */}
+                            <div className="flex flex-col items-end shrink-0">
+                              <div className="flex items-center bg-white border border-pink-200 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-rose-400">
+                                <input
+                                  type="number"
+                                  step="any"
+                                  min="0.0001"
+                                  placeholder="Qty"
+                                  value={row.qty_required || ""}
+                                  onChange={(e) => handleUpdateAddonMainIngredient(idx, "qty_required", e.target.value)}
+                                  className="w-20 px-2 py-1.5 text-xs font-bold text-gray-800 text-right outline-none"
+                                  required
+                                />
+                                {compatibleUnits.length > 1 ? (
+                                  <select
+                                    value={curUnit}
+                                    onChange={(e) => handleUpdateAddonMainIngredient(idx, "selected_unit", e.target.value)}
+                                    className="px-2 py-1.5 text-[10px] font-bold text-rose-600 bg-pink-50 border-l border-pink-100 outline-none cursor-pointer hover:bg-pink-100 transition-colors"
+                                  >
+                                    {compatibleUnits.map((u) => (
+                                      <option key={u} value={u}>
+                                        {u}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <span className="px-2 py-1.5 text-[10px] font-bold text-gray-500 bg-pink-50 border-l border-pink-100 whitespace-nowrap min-w-[42px] text-center">
+                                    {baseUnit || "-"}
+                                  </span>
+                                )}
+                              </div>
+                              {previewText && (
+                                <span className="text-[9px] font-medium text-rose-500 mt-0.5 whitespace-nowrap">
+                                  {previewText}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Tombol Hapus */}
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveAddonMainIngredient(idx)}
+                              className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors shrink-0"
+                              title="Hapus bahan ini"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* KELOMPOK B: PACKAGING / KEMASAN SAUS */}
+                <div className="space-y-2 bg-white/90 rounded-xl p-3 border border-amber-100 shadow-2xs">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-5 h-5 rounded-md bg-amber-500 text-white font-black text-[10px] flex items-center justify-center shadow-2xs">
+                        B
+                      </span>
+                      <span className="text-xs font-black text-gray-800">
+                        Packaging / Kemasan
+                      </span>
+                      <span className="text-[10px] text-gray-400 font-medium">
+                        (Cup Saus, Plastik Klip, Tutup Cup, dll.)
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAddAddonPackagingItem}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-all"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>Tambah Kemasan</span>
+                    </button>
+                  </div>
+
+                  {addonPackagingItems.length === 0 ? (
+                    <div className="py-2.5 text-center text-[11px] text-gray-400 bg-amber-50/20 rounded-lg border border-dashed border-amber-200">
+                      Belum ada kemasan. Klik <strong className="text-amber-700 font-semibold">+ Tambah Kemasan</strong> untuk memasukkan cup saus atau plastik klip.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {addonPackagingItems.map((row, idx) => {
+                        const selectedItem = inventoryItems.find((it) => it.id === row.inventory_item_id);
+                        const baseUnit = selectedItem?.unit || "";
+                        const compatibleUnits = getCompatibleUnits(baseUnit);
+                        const curUnit = row.selected_unit || compatibleUnits[0] || baseUnit || "pcs";
+                        const previewText = getConversionPreviewText(row.qty_required, curUnit, baseUnit);
+
+                        return (
+                          <div
+                            key={idx}
+                            className="flex items-center gap-2 p-2 bg-amber-50/20 rounded-xl border border-amber-100 hover:border-amber-300 transition-all text-xs"
+                          >
+                            {/* Dropdown Kemasan */}
+                            <div className="flex-1 min-w-0">
+                              <select
+                                value={row.inventory_item_id}
+                                onChange={(e) => {
+                                  const newId = e.target.value;
+                                  const targetInv = inventoryItems.find((it) => it.id === newId);
+                                  const defUnit = getCompatibleUnits(targetInv?.unit)[0] || targetInv?.unit || "";
+                                  handleUpdateAddonPackagingItem(idx, "inventory_item_id", newId, defUnit);
+                                }}
+                                className="w-full px-2.5 py-1.5 text-xs bg-white border border-amber-200 rounded-lg font-semibold text-gray-700 focus:ring-2 focus:ring-amber-400 truncate"
+                              >
+                                <option value="">-- Pilih Kemasan / Wadah --</option>
+                                {inventoryItems.map((it) => (
+                                  <option key={it.id} value={it.id}>
+                                    {it.name} (Satuan: {it.unit})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Input Qty Required & Satuan */}
+                            <div className="flex flex-col items-end shrink-0">
+                              <div className="flex items-center bg-white border border-amber-200 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-amber-400">
+                                <input
+                                  type="number"
+                                  step="any"
+                                  min="0.0001"
+                                  placeholder="Qty"
+                                  value={row.qty_required || ""}
+                                  onChange={(e) => handleUpdateAddonPackagingItem(idx, "qty_required", e.target.value)}
+                                  className="w-20 px-2 py-1.5 text-xs font-bold text-gray-800 text-right outline-none"
+                                  required
+                                />
+                                {compatibleUnits.length > 1 ? (
+                                  <select
+                                    value={curUnit}
+                                    onChange={(e) => handleUpdateAddonPackagingItem(idx, "selected_unit", e.target.value)}
+                                    className="px-2 py-1.5 text-[10px] font-bold text-amber-700 bg-amber-50 border-l border-amber-100 outline-none cursor-pointer hover:bg-amber-100 transition-colors"
+                                  >
+                                    {compatibleUnits.map((u) => (
+                                      <option key={u} value={u}>
+                                        {u}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <span className="px-2 py-1.5 text-[10px] font-bold text-gray-500 bg-amber-50 border-l border-amber-100 whitespace-nowrap min-w-[42px] text-center">
+                                    {baseUnit || "-"}
+                                  </span>
+                                )}
+                              </div>
+                              {previewText && (
+                                <span className="text-[9px] font-medium text-amber-600 mt-0.5 whitespace-nowrap">
+                                  {previewText}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Tombol Hapus */}
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveAddonPackagingItem(idx)}
+                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors shrink-0"
+                              title="Hapus kemasan ini"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <button
                 type="submit"
                 className="w-full py-3 bg-rose-500 text-white font-bold text-xs rounded-2xl shadow-md shadow-rose-200 hover:bg-rose-600 active:scale-95 transition-all flex items-center justify-center gap-1.5 min-h-[48px]"
@@ -2073,23 +3347,28 @@ export default function AdminPage() {
               {addons.map((a) => (
                 <div
                   key={a.id}
-                  className="p-3 bg-pink-50/40 rounded-2xl border border-pink-100 flex items-center justify-between"
+                  className="p-3 bg-pink-50/40 rounded-2xl border border-pink-100 flex items-center justify-between gap-2"
                 >
                   <div>
                     <h4 className="font-bold text-xs text-gray-800">{a.name}</h4>
-                    <span className="text-xs font-black text-rose-600">
-                      +{formatRupiah(a.price)}
-                    </span>
+                    <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                      <span className="text-xs font-black text-rose-600">
+                        +{formatRupiah(a.price)}
+                      </span>
+                      {addonRecipesMap[a.id] ? (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 bg-rose-50 text-rose-600 rounded-md border border-rose-200">
+                          🥗 {addonRecipesMap[a.id]} Resep/BOM
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-1">
                     <button
                       type="button"
-                      onClick={() => {
-                        setIsEditingAddon(true);
-                        setAddonForm({ id: a.id, name: a.name, price: a.price });
-                      }}
+                      onClick={() => handleStartEditAddon(a)}
                       className="p-2 text-gray-500 hover:text-rose-600 hover:bg-white rounded-xl transition-colors"
+                      title="Edit varian & resep BOM"
                     >
                       <Edit3 className="w-3.5 h-3.5" />
                     </button>
@@ -2154,13 +3433,17 @@ export default function AdminPage() {
                   <select
                     value={inventoryForm.unit}
                     onChange={(e) => setInventoryForm({ ...inventoryForm, unit: e.target.value })}
-                    className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl"
+                    className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-medium"
                   >
                     <option value="potong">potong</option>
-                    <option value="kg">kg</option>
+                    <option value="kg">kg (kilogram)</option>
+                    <option value="gram">gram (gr)</option>
                     <option value="liter">liter</option>
+                    <option value="ml">ml (mililiter)</option>
                     <option value="pack">pack</option>
                     <option value="pcs">pcs</option>
+                    <option value="lembar">lembar</option>
+                    <option value="butir">butir</option>
                   </select>
                 </div>
 

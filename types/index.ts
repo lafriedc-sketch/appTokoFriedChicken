@@ -36,13 +36,42 @@ export interface InventoryItem {
   created_at?: string;
 }
 
+export interface InventoryBatch {
+  id: string;
+  inventory_item_id: string;
+  batch_date: string;
+  initial_qty: number;
+  remaining_qty: number;
+  cost_per_unit: number;
+  created_at?: string;
+  inventory_item?: InventoryItem;
+}
+
+export interface ProductRecipe {
+  id: string;
+  product_id: string;
+  inventory_item_id: string;
+  qty_required: number;
+  created_at?: string;
+  inventory_item?: InventoryItem;
+}
+
+export interface AddonRecipe {
+  id: string;
+  addon_id: string;
+  inventory_item_id: string;
+  qty_required: number;
+  created_at?: string;
+  inventory_item?: InventoryItem;
+}
+
 export interface InventoryLog {
   id: string;
   item_id: string;
   change_qty: number;
   type: 'in' | 'out' | 'opname';
   cost_total: number;
-  payment_source: 'drawer' | 'other';
+  payment_source: 'drawer' | 'other' | 'system_fifo' | string;
   created_at?: string;
   item?: InventoryItem;
 }
@@ -137,5 +166,44 @@ export interface CashierActivityLog {
   receipt_no?: string;
   amount?: number;
   created_at: string;
+}
+
+export interface RentSettings {
+  monthly_rent: number;
+  monthly_electricity: number;
+  rent_due_day: number; // 1 - 31
+  accumulated_fund?: number;
+}
+
+export interface AiAdvisorResult {
+  period: "today" | "yesterday" | "7days" | "month" | "all";
+  healthScore: "Sangat Sehat" | "Sehat" | "Waspada" | "Perlu Perhatian";
+  healthSummary: string;
+  grossSales: number;
+  totalHpp: number;
+  netProfit: number;
+  marginPercentage: number;
+  recommendedSinkingFund: {
+    percentage: number;
+    amount: number;
+    explanation: string;
+  };
+  safeMoneyToTake: {
+    amount: number;
+    percentage: number;
+    explanation: string;
+  };
+  dueDateStatus: {
+    dueDay: number;
+    daysRemaining: number;
+    targetTotal: number;
+    accumulatedFund: number;
+    deficit: number;
+    dailyPaceNeeded: number;
+    statusText: string;
+  };
+  operationalTip: string;
+  generatedAt: string;
+  isAiLive?: boolean;
 }
 
