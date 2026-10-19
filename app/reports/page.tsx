@@ -332,6 +332,7 @@ export default function ReportsPage() {
       monthly_electricity: Number(editElectricity) || 300000,
       rent_due_day: Math.min(31, Math.max(1, Number(editDueDay) || 25)),
       accumulated_fund: rentSettings.accumulated_fund || 0,
+      fixed_expenses: rentSettings.fixed_expenses,
     };
     setRentSettings(updated);
     if (typeof window !== "undefined") {
@@ -446,7 +447,9 @@ export default function ReportsPage() {
   const recSinkingPercent = aiResult?.recommendedSinkingFund?.percentage ?? 10;
   const safeMoneyAmount = aiResult?.safeMoneyToTake?.amount ?? Math.max(0, netProfit - recSinkingAmount);
   const safeMoneyPercent = aiResult?.safeMoneyToTake?.percentage ?? (grossSales > 0 ? ((safeMoneyAmount / grossSales) * 100).toFixed(0) : "0");
-  const targetTotalBeban = (rentSettings.monthly_rent || 1500000) + (rentSettings.monthly_electricity || 300000);
+  const targetTotalBeban = Array.isArray(rentSettings.fixed_expenses) && rentSettings.fixed_expenses.length > 0
+    ? rentSettings.fixed_expenses.reduce((sum: number, item) => sum + (Number(item.amount) || 0), 0)
+    : (rentSettings.monthly_rent || 1500000) + (rentSettings.monthly_electricity || 300000);
 
   return (
     <div className="space-y-6 pb-12">
@@ -579,11 +582,11 @@ export default function ReportsPage() {
             </div>
           </div>
 
-          {/* Card 3: Tabungan Sewa & Listrik */}
+          {/* Card 3: Tabungan Beban Tetap & Rutin */}
           <div className="bg-purple-50/40 rounded-2xl p-4 border border-purple-200/70 flex flex-col justify-between">
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[11px] font-bold text-purple-800 uppercase tracking-wider">3. Alokasi Sewa & Listrik</span>
+                <span className="text-[11px] font-bold text-purple-800 uppercase tracking-wider">3. Alokasi Beban Rutin</span>
                 <span className="text-[10px] font-black bg-purple-200 text-purple-900 px-1.5 py-0.5 rounded">
                   {recSinkingPercent}% Sinking Fund
                 </span>
@@ -592,9 +595,14 @@ export default function ReportsPage() {
                 {formatRupiah(recSinkingAmount)}
               </p>
             </div>
-            <div className="pt-2 mt-2 border-t border-purple-200/50 text-[10px] text-purple-800 font-bold flex items-center gap-1">
-              <PiggyBank className="w-3 h-3 text-purple-600" />
-              <span>Simpan ke amplop sewa & listrik</span>
+            <div className="pt-2 mt-2 border-t border-purple-200/50 text-[10px] text-purple-800 font-bold flex items-center justify-between">
+              <span className="flex items-center gap-1">
+                <PiggyBank className="w-3 h-3 text-purple-600" />
+                <span>Tabungan sewa, gas & listrik</span>
+              </span>
+              <span className="text-[10px] bg-purple-100 text-purple-900 px-1.5 py-0.5 rounded-full font-bold">
+                {rentSettings.fixed_expenses?.length || 2} Pos
+              </span>
             </div>
           </div>
 
@@ -631,7 +639,12 @@ export default function ReportsPage() {
               </span>
             </div>
             <div className="text-xs font-bold text-gray-600">
-              Target Bulanan: <strong className="text-gray-900">{formatRupiah(targetTotalBeban)}</strong> (Sewa {formatRupiah(rentSettings.monthly_rent)} + Listrik {formatRupiah(rentSettings.monthly_electricity)})
+              Target Bulanan: <strong className="text-gray-900">{formatRupiah(targetTotalBeban)}</strong>
+              {Array.isArray(rentSettings.fixed_expenses) && rentSettings.fixed_expenses.length > 0 ? (
+                <span className="text-gray-500 font-normal"> ({rentSettings.fixed_expenses.length} pos beban rutin)</span>
+              ) : (
+                <span className="text-gray-500 font-normal"> (Sewa + Listrik)</span>
+              )}
             </div>
           </div>
 
@@ -926,6 +939,29 @@ export default function ReportsPage() {
             <p className="text-xs text-gray-500">
               Data ini dipakai oleh AI untuk menghitung rekomendasi persentase sisihan harian dan uang yang aman lu ambil.
             </p>
+
+            {Array.isArray(rentSettings.fixed_expenses) && rentSettings.fixed_expenses.length > 0 && (
+              <div className="p-3 bg-pink-50/70 rounded-2xl border border-pink-100 space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold text-gray-800">
+                  <span>Daftar Pos Beban Rutin:</span>
+                  <span className="text-rose-600 font-black">{formatRupiah(targetTotalBeban)} / bln</span>
+                </div>
+                <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                  {rentSettings.fixed_expenses.map((exp) => (
+                    <div key={exp.id} className="flex items-center justify-between text-[11px] bg-white px-2.5 py-1.5 rounded-xl border border-pink-100">
+                      <span className="font-semibold text-gray-700">{exp.name}</span>
+                      <span className="font-bold text-gray-900">{formatRupiah(exp.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+                <a
+                  href="/admin"
+                  className="block text-center text-[10px] font-bold text-rose-600 hover:underline pt-1"
+                >
+                  ⚙️ Tambah / Edit Pos Pengeluaran di Menu Admin &rarr;
+                </a>
+              </div>
+            )}
 
             <form onSubmit={handleSaveRentSettings} className="space-y-3.5">
               <div>

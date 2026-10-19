@@ -168,11 +168,18 @@ export interface CashierActivityLog {
   created_at: string;
 }
 
+export interface FixedExpenseItem {
+  id: string;
+  name: string;
+  amount: number;
+}
+
 export interface RentSettings {
   monthly_rent: number;
   monthly_electricity: number;
   rent_due_day: number; // 1 - 31
   accumulated_fund?: number;
+  fixed_expenses?: FixedExpenseItem[];
 }
 
 export interface AiAdvisorResult {

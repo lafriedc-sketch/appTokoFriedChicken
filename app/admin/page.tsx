@@ -43,7 +43,7 @@ import {
   Box
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
-import { Product, ProductAddon, InventoryItem, StoreSettings, CashierUser, Transaction, CashierActivityLog, PromoItemComponent } from "@/types";
+import { Product, ProductAddon, InventoryItem, StoreSettings, CashierUser, Transaction, CashierActivityLog, PromoItemComponent, FixedExpenseItem, RentSettings } from "@/types";
 import { formatRupiah, formatDateIndo } from "@/lib/utils";
 
 export default function AdminPage() {
@@ -68,6 +68,16 @@ export default function AdminPage() {
   const [adminMonthlyRent, setAdminMonthlyRent] = useState<number>(1500000);
   const [adminMonthlyElectricity, setAdminMonthlyElectricity] = useState<number>(300000);
   const [adminRentDueDay, setAdminRentDueDay] = useState<number>(25);
+  const [fixedExpenses, setFixedExpenses] = useState<FixedExpenseItem[]>([
+    { id: "exp_1", name: "Sewa Toko / Kios", amount: 1500000 },
+    { id: "exp_2", name: "Token Listrik & Air", amount: 300000 },
+    { id: "exp_3", name: "Gas LPG 3kg", amount: 400000 },
+  ]);
+  const [newExpenseName, setNewExpenseName] = useState("");
+  const [newExpenseAmount, setNewExpenseAmount] = useState<number | string>("");
+  const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
+  const [editExpenseName, setEditExpenseName] = useState("");
+  const [editExpenseAmount, setEditExpenseAmount] = useState<number | string>("");
   const [products, setProducts] = useState<Product[]>([]);
   const [addons, setAddons] = useState<ProductAddon[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
@@ -499,7 +509,7 @@ export default function AdminPage() {
         setSettings(sData);
       }
 
-      // Load Rent Settings untuk AI Advisor
+      // Load Rent & Fixed Expenses Settings untuk AI Advisor
       if (typeof window !== "undefined") {
         try {
           const rentJson = localStorage.getItem("la_rent_settings");
@@ -508,6 +518,16 @@ export default function AdminPage() {
             if (parsed.monthly_rent) setAdminMonthlyRent(parsed.monthly_rent);
             if (parsed.monthly_electricity) setAdminMonthlyElectricity(parsed.monthly_electricity);
             if (parsed.rent_due_day) setAdminRentDueDay(parsed.rent_due_day);
+            if (Array.isArray(parsed.fixed_expenses) && parsed.fixed_expenses.length > 0) {
+              setFixedExpenses(parsed.fixed_expenses);
+            } else {
+              const initial: FixedExpenseItem[] = [
+                { id: "exp_1", name: "Sewa Toko / Kios", amount: Number(parsed.monthly_rent) || 1500000 },
+                { id: "exp_2", name: "Token Listrik & Air", amount: Number(parsed.monthly_electricity) || 300000 },
+                { id: "exp_3", name: "Gas LPG 3kg", amount: 400000 },
+              ];
+              setFixedExpenses(initial);
+            }
           }
         } catch {}
       }
@@ -916,13 +936,16 @@ export default function AdminPage() {
 
       if (error) throw error;
 
-      // Simpan pengaturan sewa & jatuh tempo untuk AI Advisor
+      // Simpan pengaturan sewa & beban tetap untuk AI Advisor
       if (typeof window !== "undefined") {
         try {
+          const rentItem = fixedExpenses.find((e) => e.name.toLowerCase().includes("sewa"))?.amount || adminMonthlyRent || 1500000;
+          const elecItem = fixedExpenses.find((e) => e.name.toLowerCase().includes("listrik"))?.amount || adminMonthlyElectricity || 300000;
           const rentPayload = {
-            monthly_rent: Number(adminMonthlyRent) || 1500000,
-            monthly_electricity: Number(adminMonthlyElectricity) || 300000,
+            monthly_rent: Number(rentItem),
+            monthly_electricity: Number(elecItem),
             rent_due_day: Math.min(31, Math.max(1, Number(adminRentDueDay) || 25)),
+            fixed_expenses: fixedExpenses,
           };
           localStorage.setItem("la_rent_settings", JSON.stringify(rentPayload));
         } catch {}
@@ -934,6 +957,76 @@ export default function AdminPage() {
     } catch (err: any) {
       showNotification(err.message || "Gagal menyimpan pengaturan", "error");
     }
+  };
+
+  // Helper CRUD Pengeluaran Tetap Bulanan (Sinking Fund)
+  const saveFixedExpensesToStorage = (items: FixedExpenseItem[], dueDay = adminRentDueDay) => {
+    if (typeof window !== "undefined") {
+      try {
+        const rentItem = items.find((e) => e.name.toLowerCase().includes("sewa"))?.amount || 1500000;
+        const elecItem = items.find((e) => e.name.toLowerCase().includes("listrik"))?.amount || 300000;
+        const payload = {
+          monthly_rent: Number(rentItem),
+          monthly_electricity: Number(elecItem),
+          rent_due_day: Math.min(31, Math.max(1, Number(dueDay) || 25)),
+          fixed_expenses: items,
+        };
+        localStorage.setItem("la_rent_settings", JSON.stringify(payload));
+      } catch {}
+    }
+  };
+
+  const handleAddExpense = (customName?: string, customAmount?: number) => {
+    const finalName = (customName !== undefined ? customName : newExpenseName).trim();
+    const finalAmount = Number(customAmount !== undefined ? customAmount : newExpenseAmount);
+    if (!finalName || finalAmount <= 0) {
+      showNotification("Nama pengeluaran dan nominal harus diisi dengan benar!", "error");
+      return;
+    }
+    const newItem: FixedExpenseItem = {
+      id: "exp_" + Date.now(),
+      name: finalName,
+      amount: finalAmount,
+    };
+    const updated = [...fixedExpenses, newItem];
+    setFixedExpenses(updated);
+    setNewExpenseName("");
+    setNewExpenseAmount("");
+    saveFixedExpensesToStorage(updated);
+    showNotification(`Beban "${newItem.name}" (${formatRupiah(newItem.amount)}) berhasil ditambahkan! 🌸`);
+  };
+
+  const handleStartEditExpense = (item: FixedExpenseItem) => {
+    setEditingExpenseId(item.id);
+    setEditExpenseName(item.name);
+    setEditExpenseAmount(item.amount);
+  };
+
+  const handleSaveEditExpense = (id: string) => {
+    const trimmed = editExpenseName.trim();
+    const amt = Number(editExpenseAmount);
+    if (!trimmed || amt <= 0) {
+      showNotification("Nama dan nominal harus valid!", "error");
+      return;
+    }
+    const updated = fixedExpenses.map((it) =>
+      it.id === id ? { ...it, name: trimmed, amount: amt } : it
+    );
+    setFixedExpenses(updated);
+    setEditingExpenseId(null);
+    saveFixedExpensesToStorage(updated);
+    showNotification("Beban pengeluaran berhasil diperbarui! 🌸");
+  };
+
+  const handleDeleteExpense = (id: string, name: string) => {
+    if (fixedExpenses.length <= 1) {
+      showNotification("Minimal sisakan 1 pos pengeluaran bulanan", "error");
+      return;
+    }
+    const updated = fixedExpenses.filter((it) => it.id !== id);
+    setFixedExpenses(updated);
+    saveFixedExpensesToStorage(updated);
+    showNotification(`Pengeluaran "${name}" berhasil dihapus`, "success");
   };
 
   // 2. PRODUCT CRUD
@@ -2204,65 +2297,219 @@ export default function AdminPage() {
               />
             </div>
 
-            {/* Target Biaya Tetap untuk AI Financial Advisor */}
-            <div className="p-4 rounded-2xl bg-pink-50/60 border border-pink-200/80 space-y-3">
-              <div className="flex items-center gap-2">
-                <span className="text-base">🤖</span>
-                <div>
-                  <h3 className="font-extrabold text-xs text-gray-800">
-                    Target Biaya Tetap & Jatuh Tempo Sewa (Untuk AI Advisor)
-                  </h3>
-                  <p className="text-[10px] text-gray-500">
-                    Dipakai AI untuk menghitung rekomendasi persentase sisihan harian & uang aman yang bisa lu ambil.
-                  </p>
+            {/* Target Biaya Tetap & Pengeluaran Rutin untuk AI Financial Advisor (DYNAMIC CRUD) */}
+            <div className="p-4 sm:p-5 rounded-3xl bg-pink-50/70 border-2 border-pink-200/80 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-pink-200">
+                <div className="flex items-center gap-2.5">
+                  <span className="text-xl">🤖</span>
+                  <div>
+                    <h3 className="font-black text-xs sm:text-sm text-gray-800">
+                      Kelola Beban Tetap & Operasional Bulanan (Sinking Fund AI)
+                    </h3>
+                    <p className="text-[11px] text-gray-500">
+                      Tambah/ubah pos pengeluaran rutin (Sewa, Gas LPG, Listrik, Gaji, dll). AI otomatis menghitung total beban & rekomendasi sisihan harian toko.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="text-right flex items-center gap-2 self-start sm:self-auto">
+                  <div className="bg-rose-500 text-white px-3 py-1.5 rounded-xl shadow-xs">
+                    <span className="text-[10px] font-semibold block uppercase">Total Beban / Bulan</span>
+                    <span className="text-sm font-black tracking-tight">
+                      {formatRupiah(fixedExpenses.reduce((sum, it) => sum + (Number(it.amount) || 0), 0))}
+                    </span>
+                  </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* Tgl Jatuh Tempo Utama */}
+              <div className="bg-white p-3 rounded-2xl border border-pink-200 flex items-center justify-between">
                 <div>
-                  <label className="block text-[11px] font-bold text-gray-700 mb-1">
-                    Sewa Toko / Bulan (Rp)
-                  </label>
+                  <span className="text-xs font-bold text-gray-800 block">Tanggal Jatuh Tempo Pembayaran Sewa</span>
+                  <span className="text-[10px] text-gray-500">AI menghitung sisa hari mundur ke tanggal ini tiap bulan.</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-semibold text-gray-500">Tgl</span>
                   <input
                     type="number"
-                    min="0"
-                    step="50000"
-                    value={adminMonthlyRent}
-                    onChange={(e) => setAdminMonthlyRent(Number(e.target.value) || 0)}
-                    className="w-full px-3 py-2 text-xs bg-white border border-pink-200 rounded-xl font-bold"
+                    min="1"
+                    max="31"
+                    value={adminRentDueDay}
+                    onChange={(e) => {
+                      const day = Math.min(31, Math.max(1, Number(e.target.value) || 25));
+                      setAdminRentDueDay(day);
+                      saveFixedExpensesToStorage(fixedExpenses, day);
+                    }}
+                    className="w-14 px-2 py-1.5 text-xs font-black text-center bg-pink-50 border border-pink-200 rounded-xl text-rose-600 focus:ring-2 focus:ring-rose-400"
                   />
+                  <span className="text-xs font-semibold text-gray-500">tiap bulan</span>
                 </div>
+              </div>
 
-                <div>
-                  <label className="block text-[11px] font-bold text-gray-700 mb-1">
-                    Token Listrik / Bulan (Rp)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="20000"
-                    value={adminMonthlyElectricity}
-                    onChange={(e) => setAdminMonthlyElectricity(Number(e.target.value) || 0)}
-                    className="w-full px-3 py-2 text-xs bg-white border border-pink-200 rounded-xl font-bold"
-                  />
+              {/* List Pengeluaran Bulanan yang Terdaftar (CRUD READ, UPDATE, DELETE) */}
+              <div className="space-y-2">
+                <span className="text-[11px] font-black text-gray-700 uppercase tracking-wider block">
+                  Daftar Pos Pengeluaran Rutin ({fixedExpenses.length} Pos)
+                </span>
+
+                <div className="space-y-2">
+                  {fixedExpenses.map((exp) => (
+                    <div
+                      key={exp.id}
+                      className="bg-white p-3 rounded-2xl border border-pink-100 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 transition-all hover:border-pink-300"
+                    >
+                      {editingExpenseId === exp.id ? (
+                        <div className="flex-1 flex flex-col sm:flex-row items-center gap-2">
+                          <input
+                            type="text"
+                            value={editExpenseName}
+                            onChange={(e) => setEditExpenseName(e.target.value)}
+                            placeholder="Nama Beban"
+                            className="w-full sm:w-1/2 px-3 py-1.5 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-bold"
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            step="10000"
+                            value={editExpenseAmount}
+                            onChange={(e) => setEditExpenseAmount(e.target.value)}
+                            placeholder="Nominal (Rp)"
+                            className="w-full sm:w-1/2 px-3 py-1.5 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-bold text-rose-600"
+                          />
+                          <div className="flex items-center gap-1.5 self-end sm:self-auto">
+                            <button
+                              type="button"
+                              onClick={() => handleSaveEditExpense(exp.id)}
+                              className="px-3 py-1.5 bg-emerald-500 text-white rounded-xl text-xs font-bold hover:bg-emerald-600 flex items-center gap-1 shadow-xs"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Simpan</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingExpenseId(null)}
+                              className="px-2.5 py-1.5 bg-gray-100 text-gray-600 rounded-xl text-xs font-bold hover:bg-gray-200"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-2.5">
+                            <span className="w-7 h-7 rounded-xl bg-pink-100 text-rose-600 text-xs flex items-center justify-center font-bold">
+                              {exp.name.toLowerCase().includes("sewa")
+                                ? "🏢"
+                                : exp.name.toLowerCase().includes("listrik")
+                                ? "⚡"
+                                : exp.name.toLowerCase().includes("gas")
+                                ? "🔥"
+                                : exp.name.toLowerCase().includes("gaji")
+                                ? "👨‍🍳"
+                                : exp.name.toLowerCase().includes("sampah")
+                                ? "🧹"
+                                : "📦"}
+                            </span>
+                            <div>
+                              <span className="font-bold text-xs text-gray-800 block">{exp.name}</span>
+                              <span className="text-[10px] text-gray-500">Biaya rutin bulanan</span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between sm:justify-end gap-3">
+                            <span className="font-black text-xs text-gray-900 bg-pink-50/80 px-2.5 py-1 rounded-xl border border-pink-100">
+                              {formatRupiah(exp.amount)} <span className="text-[10px] text-gray-500 font-normal">/ bln</span>
+                            </span>
+
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleStartEditExpense(exp)}
+                                className="w-7 h-7 rounded-xl bg-gray-50 hover:bg-pink-100 text-gray-600 hover:text-rose-600 flex items-center justify-center transition-colors"
+                                title="Edit pengeluaran ini"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteExpense(exp.id, exp.name)}
+                                className="w-7 h-7 rounded-xl bg-gray-50 hover:bg-rose-100 text-gray-400 hover:text-rose-600 flex items-center justify-center transition-colors"
+                                title="Hapus pengeluaran ini"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
                 </div>
+              </div>
 
-                <div>
-                  <label className="block text-[11px] font-bold text-gray-700 mb-1">
-                    Tgl Jatuh Tempo Bayar Sewa
-                  </label>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs text-gray-500 font-semibold">Tgl</span>
+              {/* Form Tambah Pengeluaran Baru (CRUD CREATE) */}
+              <div className="bg-white p-3.5 rounded-2xl border border-pink-200/90 shadow-xs space-y-2.5">
+                <span className="text-[11px] font-black text-rose-600 flex items-center gap-1.5">
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Tambah Pos Pengeluaran Rutin Baru</span>
+                </span>
+
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                  <div className="sm:col-span-6">
+                    <input
+                      type="text"
+                      value={newExpenseName}
+                      onChange={(e) => setNewExpenseName(e.target.value)}
+                      placeholder="Nama beban (misal: Gas LPG 3kg, Gaji Staf, Air)"
+                      className="w-full px-3 py-2 text-xs bg-pink-50/40 border border-pink-200 rounded-xl font-semibold"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-4">
                     <input
                       type="number"
-                      min="1"
-                      max="31"
-                      value={adminRentDueDay}
-                      onChange={(e) => setAdminRentDueDay(Number(e.target.value) || 25)}
-                      className="w-20 px-2 py-2 text-xs font-black text-center bg-white border border-pink-200 rounded-xl text-rose-600"
+                      min="0"
+                      step="10000"
+                      value={newExpenseAmount}
+                      onChange={(e) => setNewExpenseAmount(e.target.value)}
+                      placeholder="Nominal / bln (Rp)"
+                      className="w-full px-3 py-2 text-xs bg-pink-50/40 border border-pink-200 rounded-xl font-bold text-rose-600"
                     />
-                    <span className="text-xs text-gray-500">tiap bulan</span>
                   </div>
+
+                  <div className="sm:col-span-2">
+                    <button
+                      type="button"
+                      onClick={() => handleAddExpense()}
+                      className="w-full h-full py-2 bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs rounded-xl shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1 btn-bounce min-h-[36px]"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Tambah</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Quick Preset Chips */}
+                <div className="pt-2 border-t border-pink-100 flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] font-bold text-gray-500">Pilihan Cepat:</span>
+                  {[
+                    { label: "🔥 Gas LPG 3kg", name: "Gas LPG 3kg", amount: 400000 },
+                    { label: "👨‍🍳 Gaji Karyawan", name: "Gaji Karyawan", amount: 1500000 },
+                    { label: "🧹 Iuran Sampah", name: "Iuran Sampah & Kebersihan", amount: 100000 },
+                    { label: "💧 Air Galon / PDAM", name: "Air Bersih & Galon", amount: 100000 },
+                    { label: "📶 Kuota Internet Kios", name: "Kuota Internet Kios", amount: 75000 },
+                  ]
+                    .filter((p) => !fixedExpenses.some((e) => e.name.toLowerCase().includes(p.name.toLowerCase().slice(0, 5))))
+                    .map((preset) => (
+                      <button
+                        key={preset.name}
+                        type="button"
+                        onClick={() => handleAddExpense(preset.name, preset.amount)}
+                        className="px-2 py-1 bg-pink-50 hover:bg-pink-100 text-gray-700 hover:text-rose-600 rounded-lg text-[10px] font-semibold border border-pink-200 transition-all active:scale-95"
+                      >
+                        + {preset.label} ({formatRupiah(preset.amount)})
+                      </button>
+                    ))}
                 </div>
               </div>
             </div>

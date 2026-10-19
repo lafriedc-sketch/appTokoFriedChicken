@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AiAdvisorResult, RentSettings } from "@/types";
+import { AiAdvisorResult, RentSettings, FixedExpenseItem } from "@/types";
 
 export const dynamic = "force-dynamic";
 
@@ -29,9 +29,19 @@ export async function POST(req: NextRequest) {
     const now = new Date();
     const currentDay = now.getDate();
     const dueDay = Math.min(31, Math.max(1, Number(rentSettings.rent_due_day) || 25));
+
+    // Hitung total dari dynamic fixed_expenses jika tersedia, atau fallback ke monthly_rent + electricity
+    const fixedExpenses: FixedExpenseItem[] = Array.isArray(rentSettings.fixed_expenses) && rentSettings.fixed_expenses.length > 0
+      ? rentSettings.fixed_expenses
+      : [
+          { id: "1", name: "Sewa Toko", amount: Number(rentSettings.monthly_rent) || 1500000 },
+          { id: "2", name: "Token Listrik", amount: Number(rentSettings.monthly_electricity) || 300000 },
+        ];
+
+    const targetTotal = fixedExpenses.reduce((sum: number, item: FixedExpenseItem) => sum + (Number(item.amount) || 0), 0);
     const targetRent = Number(rentSettings.monthly_rent) || 1500000;
     const targetElectricity = Number(rentSettings.monthly_electricity) || 300000;
-    const targetTotal = targetRent + targetElectricity;
+    const expenseBreakdownText = fixedExpenses.map((e) => `${e.name}: Rp ${Number(e.amount).toLocaleString("id-ID")}`).join(", ");
 
     // Hitung sisa hari menuju jatuh tempo
     let daysRemaining = 0;
@@ -103,7 +113,7 @@ Anda adalah CFO & Konsultan Finansial Ahli untuk UMKM Kios "LA Fried Chicken". B
 - Omzet: Rp ${grossSales.toLocaleString("id-ID")} (${totalTransactions} transaksi)
 - Modal Bahan Baku FIFO (HPP): Rp ${totalHpp.toLocaleString("id-ID")}
 - Laba Kotor: Rp ${netProfit.toLocaleString("id-ID")} (Margin: ${marginPercentage}%)
-- Target Sewa Toko: Rp ${targetRent.toLocaleString("id-ID")} + Token Listrik: Rp ${targetElectricity.toLocaleString("id-ID")} = Total Rp ${targetTotal.toLocaleString("id-ID")}
+- Target Pengeluaran Rutin & Beban Tetap: Rp ${targetTotal.toLocaleString("id-ID")} (${expenseBreakdownText})
 - Jatuh tempo sewa: Tanggal ${dueDay} (${daysRemaining} hari lagi). Kurang dana: Rp ${deficit.toLocaleString("id-ID")}
 - Sisihan disarankan: ${recPercent}% (Rp ${recAmount.toLocaleString("id-ID")})
 - Uang aman ditarik pemilik: Rp ${safeMoney.toLocaleString("id-ID")}
@@ -112,8 +122,8 @@ Anda adalah CFO & Konsultan Finansial Ahli untuk UMKM Kios "LA Fried Chicken". B
 Balas HANYA dalam format JSON valid tanpa markdown backticks:
 {
   "healthSummary": "1-2 kalimat ringkasan kesehatan finansial toko dan margin keuntungan.",
-  "sinkingExplanation": "1-2 kalimat penjelasan kenapa persentase sisihan ini aman menuju tanggal jatuh tempo.",
-  "safeMoneyExplanation": "1-2 kalimat motivasi dan kepastian berapa uang yang 100% aman ditarik ke dompet pribadi hari ini.",
+  "sinkingExplanation": "1-2 kalimat penjelasan kenapa persentase sisihan ini aman untuk mengcover beban rutin (${expenseBreakdownText}) menuju tanggal jatuh tempo.",
+  "safeMoneyExplanation": "1-2 kalimat motivasi dan kepastian berapa uang yang 100% aman ditarik ke dompet pribadi hari ini setelah beban tertutup.",
   "operationalTip": "1-2 kalimat saran taktis operasional (misal jam mulai goreng batch berikutnya agar ayam/usus selalu hangat di jam ramai dan mencegah susut)."
 }
 `;
@@ -160,9 +170,9 @@ Balas HANYA dalam format JSON valid tanpa markdown backticks:
 
     if (!aiSinkingExplanation) {
       if (deficit <= 0) {
-        aiSinkingExplanation = `Alhamdulillah! Tabungan sewa dan token listrik bulan ini sudah lunas terpenuhi 100%. Lu tidak perlu menyisihkan tambahan hari ini.`;
+        aiSinkingExplanation = `Alhamdulillah! Tabungan sewa dan seluruh beban rutin bulanan (${expenseBreakdownText}) sudah lunas terpenuhi 100%. Lu tidak perlu menyisihkan tambahan hari ini.`;
       } else {
-        aiSinkingExplanation = `Dengan sisa ${daysRemaining} hari menuju jatuh tempo tanggal ${dueDay}, menyisihkan ${recPercent}% (Rp ${recAmount.toLocaleString("id-ID")}) hari ini akan menjaga target tetap tepat waktu tanpa membebani kasir.`;
+        aiSinkingExplanation = `Dengan sisa ${daysRemaining} hari menuju jatuh tempo tanggal ${dueDay}, menyisihkan ${recPercent}% (Rp ${recAmount.toLocaleString("id-ID")}) hari ini akan menjaga target ${fixedExpenses.length} pos beban rutin (${expenseBreakdownText}) tetap aman tercapai tanpa membebani kasir.`;
       }
     }
 
