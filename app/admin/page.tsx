@@ -627,7 +627,8 @@ export default function AdminPage() {
       // 6. Fetch Transactions for Cashier History
       let remoteTxs: Transaction[] = [];
       try {
-        const { data: tData } = await supabase
+        let tData: any = null;
+        const resWithCashier = await supabase
           .from("transactions")
           .select(`
             id,
@@ -643,9 +644,30 @@ export default function AdminPage() {
           `)
           .order("created_at", { ascending: false });
 
+        if (resWithCashier.error) {
+          const resFallback = await supabase
+            .from("transactions")
+            .select(`
+              id,
+              receipt_no,
+              total_amount,
+              payment_method,
+              cash_received,
+              cash_change,
+              status,
+              created_at,
+              transaction_items (id, product_name, qty, unit_price, subtotal)
+            `)
+            .order("created_at", { ascending: false });
+          tData = resFallback.data;
+        } else {
+          tData = resWithCashier.data;
+        }
+
         if (tData) {
           remoteTxs = tData.map((t: any) => ({
             ...t,
+            cashier_name: t.cashier_name || "Kasir Utama",
             items: t.transaction_items,
           }));
         }

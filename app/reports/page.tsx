@@ -86,7 +86,8 @@ export default function ReportsPage() {
       // Fetch all transactions with items & cashier
       let remoteTxs: any[] = [];
       try {
-        const { data: transData } = await supabase
+        let transData: any = null;
+        const resWithCashier = await supabase
           .from("transactions")
           .select(`
             id,
@@ -102,9 +103,31 @@ export default function ReportsPage() {
           `)
           .order("created_at", { ascending: false });
 
+        if (resWithCashier.error) {
+          // Fallback jika kolom cashier_name belum ada di database Supabase
+          const resFallback = await supabase
+            .from("transactions")
+            .select(`
+              id,
+              receipt_no,
+              total_amount,
+              payment_method,
+              cash_received,
+              cash_change,
+              status,
+              created_at,
+              transaction_items (id, product_name, qty, unit_price, subtotal)
+            `)
+            .order("created_at", { ascending: false });
+          transData = resFallback.data;
+        } else {
+          transData = resWithCashier.data;
+        }
+
         if (transData) {
           remoteTxs = transData.map((t: any) => ({
             ...t,
+            cashier_name: t.cashier_name || "Kasir Utama",
             items: t.transaction_items,
           }));
         }
