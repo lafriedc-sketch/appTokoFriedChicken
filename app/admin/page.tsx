@@ -477,15 +477,22 @@ export default function AdminPage() {
   });
   const [isEditingAddon, setIsEditingAddon] = useState(false);
 
-  // Inventory Item Form
+  // Inventory Item Form & Cost Mapping
+  const [inventoryCostMap, setInventoryCostMap] = useState<Record<string, number>>({});
   const [inventoryForm, setInventoryForm] = useState({
     id: "",
     name: "",
     unit: "potong",
     min_stock: 10,
     current_stock: 50,
+    cost_per_unit: 0,
   });
   const [isEditingInventory, setIsEditingInventory] = useState(false);
+
+  // Low stock items memo
+  const lowStockItems = useMemo(() => {
+    return inventoryItems.filter((i) => Number(i.current_stock) <= Number(i.min_stock));
+  }, [inventoryItems]);
 
   // Feedback notifications
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -603,6 +610,32 @@ export default function AdminPage() {
         }
       } catch (e) {
         console.warn("Gagal load hitungan resep addon:", e);
+      }
+
+      // 4d. Fetch Inventory Batches for Unit Cost & Valuation
+      try {
+        const { data: bData } = await supabase
+          .from("inventory_batches")
+          .select("inventory_item_id, cost_per_unit, remaining_qty, batch_date")
+          .order("batch_date", { ascending: false });
+
+        const costMap: Record<string, number> = {};
+        if (typeof window !== "undefined") {
+          try {
+            const stored = localStorage.getItem("la_item_default_costs");
+            if (stored) Object.assign(costMap, JSON.parse(stored));
+          } catch {}
+        }
+        if (bData) {
+          bData.forEach((b) => {
+            if (!costMap[b.inventory_item_id] && Number(b.cost_per_unit) > 0) {
+              costMap[b.inventory_item_id] = Number(b.cost_per_unit);
+            }
+          });
+        }
+        setInventoryCostMap(costMap);
+      } catch (e) {
+        console.warn("Gagal load inventory batches cost:", e);
       }
 
       // 5. Cashier Users
@@ -1484,6 +1517,8 @@ export default function AdminPage() {
     if (!inventoryForm.name.trim()) return;
 
     try {
+      let savedItemId = inventoryForm.id;
+
       if (isEditingInventory && inventoryForm.id) {
         const { error } = await supabase
           .from("inventory_items")
@@ -1498,15 +1533,57 @@ export default function AdminPage() {
         if (error) throw error;
         showNotification("Master bahan baku diperbarui!");
       } else {
-        const { error } = await supabase.from("inventory_items").insert({
-          name: inventoryForm.name,
-          unit: inventoryForm.unit,
-          min_stock: Number(inventoryForm.min_stock),
-          current_stock: Number(inventoryForm.current_stock),
-        });
+        const { data: inserted, error } = await supabase
+          .from("inventory_items")
+          .insert({
+            name: inventoryForm.name,
+            unit: inventoryForm.unit,
+            min_stock: Number(inventoryForm.min_stock),
+            current_stock: Number(inventoryForm.current_stock),
+          })
+          .select()
+          .single();
 
         if (error) throw error;
+        if (inserted) savedItemId = inserted.id;
         showNotification("Bahan baku baru berhasil didaftarkan!");
+      }
+
+      // Sync harga modal satuan ke inventory_batches & fallback
+      const costNum = Number(inventoryForm.cost_per_unit) || 0;
+      if (savedItemId && costNum > 0) {
+        if (typeof window !== "undefined") {
+          try {
+            const stored = localStorage.getItem("la_item_default_costs");
+            const parsed = stored ? JSON.parse(stored) : {};
+            parsed[savedItemId] = costNum;
+            localStorage.setItem("la_item_default_costs", JSON.stringify(parsed));
+          } catch {}
+        }
+
+        const { data: activeBatches } = await supabase
+          .from("inventory_batches")
+          .select("id")
+          .eq("inventory_item_id", savedItemId)
+          .gt("remaining_qty", 0);
+
+        if (activeBatches && activeBatches.length > 0) {
+          for (const b of activeBatches) {
+            await supabase
+              .from("inventory_batches")
+              .update({ cost_per_unit: costNum })
+              .eq("id", b.id);
+          }
+        } else {
+          const qty = Number(inventoryForm.current_stock) > 0 ? Number(inventoryForm.current_stock) : 1;
+          await supabase.from("inventory_batches").insert({
+            inventory_item_id: savedItemId,
+            initial_qty: qty,
+            remaining_qty: qty,
+            cost_per_unit: costNum,
+            batch_date: new Date().toISOString(),
+          });
+        }
       }
 
       setInventoryForm({
@@ -1515,6 +1592,7 @@ export default function AdminPage() {
         unit: "potong",
         min_stock: 10,
         current_stock: 50,
+        cost_per_unit: 0,
       });
       setIsEditingInventory(false);
       fetchAllData();
@@ -1617,6 +1695,52 @@ export default function AdminPage() {
         </button>
       </div>
 
+      {/* ALERT NOTIFIKASI STOK MENIPIS UNTUK ADMIN */}
+      {lowStockItems.length > 0 && (
+        <div className="bg-gradient-to-r from-amber-500/10 via-rose-500/10 to-amber-500/10 border-2 border-amber-400 rounded-3xl p-4 sm:p-5 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-md shadow-amber-200">
+                <AlertCircle className="w-5 h-5 animate-bounce" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-extrabold text-sm sm:text-base text-gray-900">
+                    🚨 Peringatan: {lowStockItems.length} Bahan Baku Menipis / Mencapai Batas Minimum!
+                  </h3>
+                  <span className="text-[10px] font-black bg-rose-500 text-white px-2 py-0.5 rounded-full">
+                    Kritis
+                  </span>
+                </div>
+                <p className="text-xs text-gray-600 mt-0.5">
+                  Bahan baku berikut sudah mencapai batas minimum. Segera restock atau buka halaman inventaris untuk mencatat belanja bahan.
+                </p>
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {lowStockItems.map((it) => (
+                    <span
+                      key={it.id}
+                      className="text-xs font-bold px-2.5 py-1 rounded-xl bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs"
+                    >
+                      ⚠️ {it.name}: <strong className="text-rose-600">{it.current_stock}</strong> / Min {it.min_stock} {it.unit}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-stretch sm:self-center shrink-0">
+              <a
+                href="/inventory"
+                className="flex-1 sm:flex-none px-4 py-2.5 bg-rose-500 text-white rounded-2xl text-xs font-bold shadow-md shadow-rose-200 hover:bg-rose-600 active:scale-95 transition-all text-center flex items-center justify-center gap-1.5 btn-bounce"
+              >
+                <Package className="w-4 h-4" />
+                <span>Buka Inventaris &rarr;</span>
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
         {[
@@ -1624,7 +1748,12 @@ export default function AdminPage() {
           { key: "profile", label: "Profil Toko", icon: Store },
           { key: "products", label: "Menu & Produk", icon: ShoppingBag },
           { key: "addons", label: "Varian Saus", icon: Layers },
-          { key: "inventory", label: "Master Bahan", icon: Boxes },
+          { 
+            key: "inventory", 
+            label: "Master Bahan", 
+            icon: Boxes, 
+            badge: lowStockItems.length > 0 ? `${lowStockItems.length} Menipis` : undefined 
+          },
           { key: "qris", label: "Mode QRIS", icon: QrCode },
         ].map((tab) => {
           const Icon = tab.icon;
@@ -1641,6 +1770,11 @@ export default function AdminPage() {
             >
               <Icon className="w-4 h-4" />
               <span>{tab.label}</span>
+              {tab.badge && (
+                <span className="ml-1 text-[10px] font-black bg-amber-200 text-amber-900 px-1.5 py-0.2 rounded-full">
+                  {tab.badge}
+                </span>
+              )}
             </button>
           );
         })}
@@ -3674,6 +3808,7 @@ export default function AdminPage() {
                       unit: "potong",
                       min_stock: 10,
                       current_stock: 50,
+                      cost_per_unit: 0,
                     });
                   }}
                   className="text-xs text-rose-500 hover:underline font-normal"
@@ -3727,14 +3862,34 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">Stok Awal Sekarang</label>
-                <input
-                  type="number"
-                  value={inventoryForm.current_stock}
-                  onChange={(e) => setInventoryForm({ ...inventoryForm, current_stock: Number(e.target.value) || 0 })}
-                  className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-bold"
-                />
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Stok Sekarang</label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={inventoryForm.current_stock}
+                    onChange={(e) => setInventoryForm({ ...inventoryForm, current_stock: Number(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">
+                    Harga Modal / {inventoryForm.unit} (Rp)
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    placeholder="0"
+                    value={inventoryForm.cost_per_unit || ""}
+                    onChange={(e) => setInventoryForm({ ...inventoryForm, cost_per_unit: Number(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-bold text-rose-600"
+                  />
+                  <span className="text-[10px] text-gray-400 mt-0.5 block truncate">
+                    {inventoryForm.cost_per_unit ? formatRupiah(inventoryForm.cost_per_unit) : "Rp 0"}
+                  </span>
+                </div>
               </div>
 
               <button
@@ -3749,50 +3904,85 @@ export default function AdminPage() {
 
           {/* Inventory Items List */}
           <div className="lg:col-span-7 bg-white rounded-3xl p-5 shadow-sm border border-pink-100">
-            <h2 className="text-sm font-extrabold text-gray-800 mb-3">
-              Master Bahan Baku ({inventoryItems.length})
+            <h2 className="text-sm font-extrabold text-gray-800 mb-3 flex items-center justify-between">
+              <span>Master Bahan Baku ({inventoryItems.length})</span>
+              <a
+                href="/inventory"
+                className="text-xs text-rose-500 hover:underline font-bold flex items-center gap-1"
+              >
+                <span>Lihat Stok Lengkap</span>
+                <span>&rarr;</span>
+              </a>
             </h2>
 
             <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
-              {inventoryItems.map((item) => (
-                <div
-                  key={item.id}
-                  className="p-3 bg-pink-50/40 rounded-2xl border border-pink-100 flex items-center justify-between"
-                >
-                  <div>
-                    <h4 className="font-bold text-xs text-gray-800">{item.name}</h4>
-                    <p className="text-[10px] text-gray-500">
-                      Stok: <span className="font-bold text-gray-700">{item.current_stock} {item.unit}</span> (Min: {item.min_stock} {item.unit})
-                    </p>
-                  </div>
+              {inventoryItems.map((item) => {
+                const isLow = Number(item.current_stock) <= Number(item.min_stock);
+                const cost = inventoryCostMap[item.id] || 0;
+                const totalVal = Number(item.current_stock) * cost;
 
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsEditingInventory(true);
-                        setInventoryForm({
-                          id: item.id,
-                          name: item.name,
-                          unit: item.unit,
-                          min_stock: item.min_stock,
-                          current_stock: item.current_stock,
-                        });
-                      }}
-                      className="p-2 text-gray-500 hover:text-rose-600 hover:bg-white rounded-xl transition-colors"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteInventory(item.id)}
-                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-white rounded-xl transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                return (
+                  <div
+                    key={item.id}
+                    className={`p-3 rounded-2xl border flex items-center justify-between transition-all ${
+                      isLow ? "bg-amber-50/50 border-amber-300 ring-1 ring-amber-200" : "bg-pink-50/40 border-pink-100"
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-bold text-xs text-gray-800">{item.name}</h4>
+                        {isLow ? (
+                          <span className="text-[9px] font-black bg-amber-200 text-amber-900 px-1.5 py-0.2 rounded-full">
+                            Menipis
+                          </span>
+                        ) : (
+                          <span className="text-[9px] font-bold bg-emerald-100 text-emerald-700 px-1.5 py-0.2 rounded-full">
+                            Aman
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-gray-500 mt-0.5">
+                        Sisa: <span className="font-bold text-gray-800">{item.current_stock} {item.unit}</span> (Min: {item.min_stock} {item.unit})
+                        {cost > 0 && (
+                          <> &bull; Modal: <strong className="text-gray-800">{formatRupiah(cost)}</strong>/{item.unit}</>
+                        )}
+                        {totalVal > 0 && (
+                          <> &bull; Total: <strong className="text-rose-600">{formatRupiah(totalVal)}</strong></>
+                        )}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsEditingInventory(true);
+                          setInventoryForm({
+                            id: item.id,
+                            name: item.name,
+                            unit: item.unit,
+                            min_stock: item.min_stock,
+                            current_stock: item.current_stock,
+                            cost_per_unit: inventoryCostMap[item.id] || 0,
+                          });
+                        }}
+                        className="p-2 text-gray-500 hover:text-rose-600 hover:bg-white rounded-xl transition-colors"
+                        title="Edit bahan & harga modal"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteInventory(item.id)}
+                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-white rounded-xl transition-colors"
+                        title="Hapus bahan"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>

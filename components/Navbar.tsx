@@ -75,6 +75,27 @@ export default function Navbar() {
     return () => clearInterval(interval);
   }, [pathname]);
 
+  // Polling cek stok menipis untuk badge notifikasi admin / kasir
+  const [lowStockCount, setLowStockCount] = useState<number>(0);
+  useEffect(() => {
+    async function checkStock() {
+      try {
+        const { data } = await supabase
+          .from("inventory_items")
+          .select("id, current_stock, min_stock");
+        if (data) {
+          const low = data.filter((i) => Number(i.current_stock) <= Number(i.min_stock)).length;
+          setLowStockCount(low);
+        }
+      } catch (err) {
+        // silent
+      }
+    }
+    checkStock();
+    const interval = setInterval(checkStock, 20000);
+    return () => clearInterval(interval);
+  }, [pathname]);
+
   const navItems = [
     { label: "Kasir", href: "/", icon: ShoppingBag, emoji: "🛒" },
     { label: "Stok", href: "/inventory", icon: Package, emoji: "📦" },
@@ -141,19 +162,35 @@ export default function Navbar() {
               {navItems.map((item) => {
                 const isActive = pathname === item.href;
                 const Icon = item.icon;
+                const isStok = item.href === "/inventory";
+                const isAdmin = item.href === "/admin";
+                const hasAlert = isStok && lowStockCount > 0;
+
                 return (
                   <Link
                     key={item.href}
                     href={item.href}
                     prefetch={true}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all relative ${
                       isActive
                         ? "bg-rose-500 text-white shadow-sm shadow-rose-300"
                         : "text-gray-600 hover:text-rose-600 hover:bg-white/80"
                     }`}
                   >
-                    <Icon className="w-3.5 h-3.5" />
+                    <div className="relative">
+                      <Icon className="w-3.5 h-3.5" />
+                      {isAdmin && lowStockCount > 0 && !isActive && (
+                        <span className="absolute -top-1 -right-1 w-2 h-2 bg-amber-500 rounded-full" />
+                      )}
+                    </div>
                     <span>{item.label}</span>
+                    {hasAlert && (
+                      <span className={`text-[10px] font-black px-1.5 py-0.2 rounded-full shadow-2xs ${
+                        isActive ? "bg-amber-400 text-amber-950" : "bg-amber-500 text-white animate-pulse"
+                      }`}>
+                        {lowStockCount}
+                      </span>
+                    )}
                   </Link>
                 );
               })}
@@ -167,6 +204,10 @@ export default function Navbar() {
         {navItems.map((item) => {
           const isActive = pathname === item.href;
           const Icon = item.icon;
+          const isStok = item.href === "/inventory";
+          const isAdmin = item.href === "/admin";
+          const hasAlert = isStok && lowStockCount > 0;
+
           return (
             <Link
               key={item.href}
@@ -179,11 +220,19 @@ export default function Navbar() {
               }`}
             >
               <div
-                className={`p-1.5 rounded-xl transition-all ${
+                className={`p-1.5 rounded-xl transition-all relative ${
                   isActive ? "bg-rose-50 scale-110" : ""
                 }`}
               >
                 <Icon className={`w-5 h-5 ${isActive ? "text-rose-500 stroke-[2.5]" : "text-gray-500"}`} />
+                {hasAlert && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 bg-amber-500 text-white text-[9px] font-black rounded-full flex items-center justify-center px-1 animate-pulse border border-white shadow-xs">
+                    {lowStockCount}
+                  </span>
+                )}
+                {isAdmin && lowStockCount > 0 && !hasAlert && (
+                  <span className="absolute top-0 right-0 w-2 h-2 bg-amber-500 rounded-full border border-white" />
+                )}
               </div>
               <span className="text-[10px] mt-0.5 leading-tight">{item.label}</span>
             </Link>

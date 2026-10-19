@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { 
   Package, 
   ShoppingCart, 
@@ -13,7 +13,14 @@ import {
   Wallet,
   Sparkles,
   Layers,
-  Clock
+  Clock,
+  Coins,
+  Edit3,
+  X,
+  Share2,
+  AlertCircle,
+  TrendingUp,
+  Tag
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { InventoryItem, InventoryLog, InventoryBatch } from "@/types";
@@ -25,6 +32,17 @@ export default function InventoryPage() {
   const [logs, setLogs] = useState<InventoryLog[]>([]);
   const [batches, setBatches] = useState<InventoryBatch[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Local storage fallback for item costs
+  const [localCosts, setLocalCosts] = useState<Record<string, number>>({});
+
+  // Modal Atur / Ubah Harga Modal
+  const [priceModalItem, setPriceModalItem] = useState<{
+    item: InventoryItem;
+    currentPrice: number;
+  } | null>(null);
+  const [modalInputPrice, setModalInputPrice] = useState<number | string>("");
+  const [isSavingPrice, setIsSavingPrice] = useState(false);
 
   // Form Input Belanja Masuk
   const [purchaseForm, setPurchaseForm] = useState({
@@ -38,6 +56,18 @@ export default function InventoryPage() {
   const [opnameCounts, setOpnameCounts] = useState<{ [itemId: string]: number }>({});
 
   const [feedback, setFeedback] = useState<string | null>(null);
+
+  // Load local costs from localStorage
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("la_item_default_costs");
+        if (stored) setLocalCosts(JSON.parse(stored));
+      } catch (e) {
+        console.warn("Gagal load local costs:", e);
+      }
+    }
+  }, []);
 
   const fetchInventoryData = async () => {
     try {
@@ -121,7 +151,145 @@ export default function InventoryPage() {
 
   const showToast = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 3000);
+    setTimeout(() => setFeedback(null), 3500);
+  };
+
+  // Helper untuk mendapatkan harga modal satuan dan total nilai stok bahan
+  const getItemPriceDetails = (itemId: string, currentStock: number) => {
+    const itemBatches = batches.filter((b) => b.inventory_item_id === itemId);
+    const activeBatches = itemBatches.filter((b) => Number(b.remaining_qty) > 0);
+
+    let unitCost = 0;
+    let totalValue = 0;
+
+    if (activeBatches.length > 0) {
+      const totalRemaining = activeBatches.reduce((acc, b) => acc + Number(b.remaining_qty), 0);
+      const totalBatchValue = activeBatches.reduce(
+        (acc, b) => acc + Number(b.remaining_qty) * Number(b.cost_per_unit || 0),
+        0
+      );
+      unitCost = totalRemaining > 0 ? Math.round(totalBatchValue / totalRemaining) : Number(activeBatches[0].cost_per_unit || 0);
+      totalValue = totalBatchValue;
+    } else if (itemBatches.length > 0) {
+      unitCost = Number(itemBatches[0].cost_per_unit || 0);
+      totalValue = Math.max(0, currentStock) * unitCost;
+    } else if (localCosts[itemId]) {
+      unitCost = Number(localCosts[itemId]);
+      totalValue = Math.max(0, currentStock) * unitCost;
+    }
+
+    return {
+      unitCost,
+      totalValue,
+      activeBatchesCount: activeBatches.length,
+    };
+  };
+
+  // Summary Metrics
+  const totalInventoryValue = useMemo(() => {
+    return items.reduce((acc, it) => {
+      const { totalValue } = getItemPriceDetails(it.id, Number(it.current_stock));
+      return acc + totalValue;
+    }, 0);
+  }, [items, batches, localCosts]);
+
+  const lowStockItems = useMemo(() => {
+    return items.filter((it) => Number(it.current_stock) <= Number(it.min_stock));
+  }, [items]);
+
+  // Open Modal Atur Harga Modal
+  const handleOpenPriceModal = (item: InventoryItem, currentPrice: number) => {
+    setPriceModalItem({ item, currentPrice });
+    setModalInputPrice(currentPrice > 0 ? currentPrice : "");
+  };
+
+  // Save Modal Harga Modal
+  const handleSavePriceModal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!priceModalItem) return;
+
+    const priceNum = Number(modalInputPrice) || 0;
+    if (priceNum <= 0) {
+      alert("Masukkan harga modal yang valid (lebih dari 0)");
+      return;
+    }
+
+    try {
+      setIsSavingPrice(true);
+      const item = priceModalItem.item;
+
+      // 1. Simpan ke localStorage fallback
+      const updatedLocalCosts = { ...localCosts, [item.id]: priceNum };
+      setLocalCosts(updatedLocalCosts);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("la_item_default_costs", JSON.stringify(updatedLocalCosts));
+      }
+
+      // 2. Cek apakah ada batch aktif di tabel inventory_batches
+      const itemBatches = batches.filter(
+        (b) => b.inventory_item_id === item.id && Number(b.remaining_qty) > 0
+      );
+
+      if (itemBatches.length > 0) {
+        // Update batch aktif dengan harga modal baru
+        for (const b of itemBatches) {
+          await supabase
+            .from("inventory_batches")
+            .update({ cost_per_unit: priceNum })
+            .eq("id", b.id);
+        }
+      } else {
+        // Buat batch persediaan baru agar FIFO POS langsung memakai harga ini
+        const qtyToInit = Number(item.current_stock) > 0 ? Number(item.current_stock) : 1;
+        await supabase.from("inventory_batches").insert({
+          inventory_item_id: item.id,
+          initial_qty: qtyToInit,
+          remaining_qty: qtyToInit,
+          cost_per_unit: priceNum,
+          batch_date: new Date().toISOString(),
+        });
+      }
+
+      showToast(`Harga modal ${item.name} berhasil disimpan: ${formatRupiah(priceNum)}/${item.unit} ✨`);
+      setPriceModalItem(null);
+      await fetchInventoryData();
+    } catch (err: any) {
+      alert(`Gagal menyimpan harga: ${err.message || "Error"}`);
+    } finally {
+      setIsSavingPrice(false);
+    }
+  };
+
+  // Quick WhatsApp Restock Generator
+  const handleShareWhatsAppRestock = () => {
+    if (lowStockItems.length === 0) {
+      showToast("Semua stok bahan masih aman! Tidak ada bahan kritis saat ini 👍");
+      return;
+    }
+
+    const todayStr = formatDateIndo(new Date().toISOString());
+    let msg = `*LA FRIED CHICKEN - NOTIFIKASI RESTOCK BAHAN BAKU* 🍗📦\n`;
+    msg += `Waktu: ${todayStr}\n\n`;
+    msg += `Halo Owner / Supplier,\n`;
+    msg += `Bahan baku berikut sudah *MENIPIS / MENCAPAI BATAS MINIMUM* di kios dan butuh restock segera:\n\n`;
+
+    lowStockItems.forEach((it, idx) => {
+      const priceDetails = getItemPriceDetails(it.id, Number(it.current_stock));
+      const estPrice = priceDetails.unitCost > 0 ? ` (@ ${formatRupiah(priceDetails.unitCost)}/${it.unit})` : "";
+      msg += `${idx + 1}. *${it.name}*\n   Sisa: *${it.current_stock} ${it.unit}* (Batas Min: ${it.min_stock} ${it.unit})${estPrice}\n`;
+    });
+
+    msg += `\nTotal: *${lowStockItems.length} bahan baku* kritis.\n`;
+    msg += `Mohon segera diproses agar operasional kios tetap lancar. Terima kasih! 🌸`;
+
+    // Copy to clipboard
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(msg);
+      showToast("Format pesan restock disalin ke clipboard! Membuka WhatsApp... 📋");
+    }
+
+    const waUrl = `https://wa.me/?text=${encodeURIComponent(msg)}`;
+    window.open(waUrl, "_blank");
   };
 
   // Submit Belanja Masuk
@@ -138,7 +306,7 @@ export default function InventoryPage() {
 
       const qtyNum = Number(purchaseForm.qty);
       const costTotalNum = Number(purchaseForm.cost_total);
-      const costPerUnit = qtyNum > 0 ? costTotalNum / qtyNum : 0;
+      const costPerUnit = qtyNum > 0 ? Math.round(costTotalNum / qtyNum) : 0;
       const batchDate = new Date().toISOString();
 
       // 1. Insert Inventory Log
@@ -163,6 +331,15 @@ export default function InventoryPage() {
 
       if (batchErr) {
         console.error("Gagal menyimpan inventory_batches:", batchErr);
+      }
+
+      // Simpan juga ke localStorage fallback
+      if (costPerUnit > 0) {
+        const updatedLocal = { ...localCosts, [purchaseForm.item_id]: costPerUnit };
+        setLocalCosts(updatedLocal);
+        if (typeof window !== "undefined") {
+          localStorage.setItem("la_item_default_costs", JSON.stringify(updatedLocal));
+        }
       }
 
       // 3. Update Item Current Stock
@@ -223,11 +400,12 @@ export default function InventoryPage() {
   };
 
   return (
-    <div className="space-y-4 pb-10">
+    <div className="space-y-4 pb-12">
       {/* Feedback Toast */}
       {feedback && (
-        <div className="fixed top-4 right-4 z-50 p-4 bg-emerald-500 text-white rounded-2xl shadow-xl text-xs font-bold border border-emerald-400 animate-pop-in">
-          {feedback}
+        <div className="fixed top-4 right-4 z-50 p-4 bg-emerald-500 text-white rounded-2xl shadow-xl text-xs font-bold border border-emerald-400 animate-pop-in flex items-center gap-2">
+          <Sparkles className="w-4 h-4" />
+          <span>{feedback}</span>
         </div>
       )}
 
@@ -241,15 +419,139 @@ export default function InventoryPage() {
             <span className="text-lg">📦🌸</span>
           </div>
           <p className="text-xs text-gray-500">
-            Kontrol stok bahan baku kios, catat belanja bahan harian, dan opname fisik tutup kios.
+            Pantau stok bahan, modal harga beli (HPP), nilai persediaan, belanja harian, dan opname tutup kios.
           </p>
+        </div>
+
+        {/* Action Button: WhatsApp Restock Alert */}
+        {lowStockItems.length > 0 && (
+          <button
+            type="button"
+            onClick={handleShareWhatsAppRestock}
+            className="self-start sm:self-center px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-2xl shadow-md shadow-emerald-200 flex items-center gap-2 transition-all btn-bounce"
+          >
+            <span>📱</span>
+            <span>Kirim WA Restock ({lowStockItems.length} Menipis)</span>
+          </button>
+        )}
+      </div>
+
+      {/* ALERT NOTIFIKASI STOK MENIPIS / MINIMUM */}
+      {lowStockItems.length > 0 && (
+        <div className="bg-gradient-to-r from-amber-500/10 via-rose-500/10 to-amber-500/10 border-2 border-amber-400 rounded-3xl p-4 sm:p-5 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-md shadow-amber-200">
+                <AlertTriangle className="w-5 h-5 animate-bounce" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm sm:text-base font-extrabold text-gray-900">
+                    🚨 Peringatan: {lowStockItems.length} Bahan Baku Menipis / Mencapai Batas Minimum!
+                  </h2>
+                  <span className="text-[10px] font-black bg-rose-500 text-white px-2 py-0.5 rounded-full">
+                    Kritis
+                  </span>
+                </div>
+                <p className="text-xs text-gray-600 mt-0.5">
+                  Stok saat ini sudah berada di batas minimum atau di bawahnya. Segera catat belanja bahan agar dapur tidak kekurangan pasokan.
+                </p>
+
+                {/* Badges of Low Stock Items */}
+                <div className="flex flex-wrap gap-1.5 mt-2.5">
+                  {lowStockItems.map((it) => (
+                    <span
+                      key={it.id}
+                      className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-xl bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs"
+                    >
+                      <span>⚠️ {it.name}:</span>
+                      <strong className="text-rose-600">{it.current_stock}</strong> / Min {it.min_stock} {it.unit}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Restock CTA */}
+            <div className="flex items-center gap-2 self-stretch sm:self-center shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  if (lowStockItems.length > 0) {
+                    setPurchaseForm((prev) => ({ ...prev, item_id: lowStockItems[0].id }));
+                  }
+                  setActiveTab("purchase");
+                }}
+                className="flex-1 sm:flex-none px-4 py-2.5 bg-rose-500 text-white rounded-2xl text-xs font-bold shadow-md shadow-rose-200 hover:bg-rose-600 active:scale-95 transition-all flex items-center justify-center gap-1.5 btn-bounce"
+              >
+                <ShoppingCart className="w-4 h-4" />
+                <span>+ Belanja Bahan</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleShareWhatsAppRestock}
+                className="px-4 py-2.5 bg-emerald-600 text-white rounded-2xl text-xs font-bold shadow-md shadow-emerald-200 hover:bg-emerald-700 active:scale-95 transition-all flex items-center justify-center gap-1.5 btn-bounce"
+                title="Kirim daftar kebutuhan belanja via WhatsApp"
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                <span>WA Supplier</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SUMMARY STATS PERSINGKATAN NILAI ASET STOK */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        {/* Total Macam Bahan */}
+        <div className="bg-white rounded-3xl p-4 border border-pink-100 shadow-sm flex items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-pink-100 text-rose-600 flex items-center justify-center shrink-0">
+            <Package className="w-5 h-5" />
+          </div>
+          <div>
+            <span className="text-[10px] font-bold text-gray-400 block uppercase tracking-wider">Total Bahan Baku</span>
+            <span className="text-lg font-black text-gray-800">{items.length} Macam</span>
+          </div>
+        </div>
+
+        {/* Total Nilai Aset Stok */}
+        <div className="bg-white rounded-3xl p-4 border border-pink-100 shadow-sm flex items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+            <Coins className="w-5 h-5" />
+          </div>
+          <div>
+            <span className="text-[10px] font-bold text-gray-400 block uppercase tracking-wider">Total Nilai Persediaan</span>
+            <span className="text-lg font-black text-emerald-600">{formatRupiah(totalInventoryValue)}</span>
+          </div>
+        </div>
+
+        {/* Status Stok Kios */}
+        <div className={`col-span-2 sm:col-span-1 bg-white rounded-3xl p-4 border shadow-sm flex items-center gap-3 ${
+          lowStockItems.length > 0 ? "border-amber-200 bg-amber-50/30" : "border-pink-100"
+        }`}>
+          <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
+            lowStockItems.length > 0 ? "bg-amber-100 text-amber-600" : "bg-emerald-100 text-emerald-600"
+          }`}>
+            {lowStockItems.length > 0 ? <AlertTriangle className="w-5 h-5 animate-pulse" /> : <CheckCircle2 className="w-5 h-5" />}
+          </div>
+          <div>
+            <span className="text-[10px] font-bold text-gray-400 block uppercase tracking-wider">Status Kebutuhan Stok</span>
+            <span className={`text-sm font-black ${lowStockItems.length > 0 ? "text-amber-700" : "text-emerald-600"}`}>
+              {lowStockItems.length > 0 ? `${lowStockItems.length} Menipis (Restock Segera)` : "Semua Bahan Aman"}
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* Tabs */}
+      {/* Tabs Navigation */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
         {[
-          { key: "items", label: "Status Stok Bahan", icon: Package },
+          { 
+            key: "items", 
+            label: "Status Stok Bahan", 
+            icon: Package, 
+            badge: lowStockItems.length > 0 ? `${lowStockItems.length} Menipis` : undefined 
+          },
           { key: "purchase", label: "Catat Belanja Masuk", icon: ShoppingCart },
           { key: "batches", label: "Batch Stok (FIFO)", icon: Layers },
           { key: "opname", label: "Stok Opname Fisik", icon: ClipboardCheck },
@@ -269,6 +571,11 @@ export default function InventoryPage() {
             >
               <Icon className="w-4 h-4" />
               <span>{tab.label}</span>
+              {tab.badge && (
+                <span className="ml-1 text-[10px] font-black bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full">
+                  {tab.badge}
+                </span>
+              )}
             </button>
           );
         })}
@@ -280,30 +587,33 @@ export default function InventoryPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
             {items.map((it) => {
               const isLow = Number(it.current_stock) <= Number(it.min_stock);
+              const priceInfo = getItemPriceDetails(it.id, Number(it.current_stock));
 
               return (
                 <div
                   key={it.id}
-                  className={`bg-white rounded-3xl p-4 border shadow-sm flex flex-col justify-between transition-all ${
-                    isLow ? "border-amber-300 bg-amber-50/30" : "border-pink-100"
+                  className={`bg-white rounded-3xl p-4 border shadow-sm flex flex-col justify-between transition-all hover:shadow-md ${
+                    isLow ? "border-amber-300 bg-amber-50/20 ring-1 ring-amber-300" : "border-pink-100"
                   }`}
                 >
                   <div>
-                    <div className="flex items-start justify-between gap-1 mb-2">
+                    {/* Item Title & Low Alert Badge */}
+                    <div className="flex items-start justify-between gap-1 mb-1">
                       <h3 className="font-extrabold text-sm text-gray-800">{it.name}</h3>
                       {isLow ? (
-                        <span className="flex items-center gap-1 text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full animate-pulse">
+                        <span className="flex items-center gap-1 text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full animate-pulse shrink-0">
                           <AlertTriangle className="w-3 h-3" />
-                          <span>Hampir Habis</span>
+                          <span>Menipis</span>
                         </span>
                       ) : (
-                        <span className="text-[10px] font-bold bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full">
+                        <span className="text-[10px] font-bold bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full shrink-0">
                           Aman
                         </span>
                       )}
                     </div>
 
-                    <div className="flex items-baseline gap-1 my-2">
+                    {/* Current Stock Quantity */}
+                    <div className="flex items-baseline gap-1 my-1.5">
                       <span className="text-2xl font-black text-gray-900">
                         {it.current_stock}
                       </span>
@@ -311,13 +621,62 @@ export default function InventoryPage() {
                         {it.unit}
                       </span>
                     </div>
+
+                    {/* Harga Modal Satuan & Total Nilai Persediaan */}
+                    <div className="bg-pink-50/40 rounded-2xl p-2.5 my-2.5 border border-pink-100/70 space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-gray-500 font-medium">Harga Modal:</span>
+                        <div className="flex items-center gap-1">
+                          {priceInfo.unitCost > 0 ? (
+                            <span className="font-black text-gray-800">
+                              {formatRupiah(priceInfo.unitCost)}
+                              <span className="text-[10px] text-gray-400 font-normal">/{it.unit}</span>
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-gray-400 italic font-medium">
+                              Belum diatur
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleOpenPriceModal(it, priceInfo.unitCost)}
+                            className="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors"
+                            title="Atur atau ubah harga modal bahan"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between text-[11px] pt-1 border-t border-pink-100/60">
+                        <span className="text-gray-500 font-medium">Estimasi Nilai Stok:</span>
+                        <span className="font-black text-rose-600">
+                          {formatRupiah(priceInfo.totalValue)}
+                        </span>
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="pt-2 border-t border-pink-100 text-[11px] text-gray-500 flex justify-between">
-                    <span>Batas Minimum:</span>
-                    <span className="font-semibold text-gray-700">
-                      {it.min_stock} {it.unit}
-                    </span>
+                  {/* Card Bottom: Min Stock & Quick Belanja */}
+                  <div className="pt-2 border-t border-pink-100 text-[11px] text-gray-500 flex items-center justify-between">
+                    <div>
+                      <span>Batas Min: </span>
+                      <span className="font-bold text-gray-700">
+                        {it.min_stock} {it.unit}
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPurchaseForm((prev) => ({ ...prev, item_id: it.id }));
+                        setActiveTab("purchase");
+                      }}
+                      className="text-[10px] font-bold text-rose-500 hover:text-rose-700 hover:underline flex items-center gap-0.5"
+                    >
+                      <ShoppingCart className="w-3 h-3" />
+                      <span>+ Belanja</span>
+                    </button>
                   </div>
                 </div>
               );
@@ -334,7 +693,7 @@ export default function InventoryPage() {
             <span>Form Pencatatan Belanja Stok Bahan</span>
           </h2>
           <p className="text-xs text-gray-500 mb-5">
-            Setiap belanja bahan baku akan menambah kuantiti stok dan jika dibayar dari laci kasir, saldo laci akan otomatis terpotong saat rekonsiliasi.
+            Setiap belanja bahan baku akan menambah kuantiti stok, menghitung harga modal satuan otomatis, dan jika dibayar dari laci kasir, saldo laci akan otomatis terpotong saat rekonsiliasi.
           </p>
 
           <form onSubmit={handlePurchaseSubmit} className="space-y-4">
@@ -350,7 +709,7 @@ export default function InventoryPage() {
               >
                 {items.map((it) => (
                   <option key={it.id} value={it.id}>
-                    {it.name} (Sisa: {it.current_stock} {it.unit})
+                    {it.name} (Sisa: {it.current_stock} {it.unit} &bull; Min: {it.min_stock})
                   </option>
                 ))}
               </select>
@@ -390,6 +749,19 @@ export default function InventoryPage() {
                 </span>
               </div>
             </div>
+
+            {/* LIVE PREVIEW HARGA MODAL SATUAN */}
+            {purchaseForm.qty > 0 && purchaseForm.cost_total > 0 && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 flex items-center justify-between text-xs animate-pop-in">
+                <span className="font-bold text-emerald-800 flex items-center gap-1.5">
+                  <TrendingUp className="w-4 h-4 text-emerald-600" />
+                  <span>Estimasi Harga Modal Beli per Satuan:</span>
+                </span>
+                <span className="font-black text-emerald-700 text-sm">
+                  {formatRupiah(Math.round(purchaseForm.cost_total / purchaseForm.qty))} / {items.find((i) => i.id === purchaseForm.item_id)?.unit || "unit"}
+                </span>
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-bold text-gray-700 mb-1.5">
@@ -439,7 +811,7 @@ export default function InventoryPage() {
         </div>
       )}
 
-      {/* TAB: BATCH STOK FIFO */}
+      {/* TAB 3: BATCH STOK FIFO */}
       {activeTab === "batches" && (
         <div className="bg-white rounded-3xl p-6 shadow-sm border border-pink-100 max-w-4xl space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -521,15 +893,15 @@ export default function InventoryPage() {
             })}
 
             {batches.length === 0 && (
-              <div className="text-center py-8 text-gray-400 text-xs bg-pink-50/30 rounded-2xl border border-dashed border-pink-200">
-                Belum ada batch belanja bahan. Masukkan belanja di tab "Catat Belanja Masuk" untuk membuat batch FIFO baru.
+              <div className="text-center py-8 text-xs text-gray-400">
+                Belum ada batch belanja bahan. Masukkan belanja di tab "Catat Belanja Masuk" atau atur harga modal untuk membuat batch FIFO.
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* TAB 3: STOK OPNAME FISIK */}
+      {/* TAB 4: STOK OPNAME FISIK */}
       {activeTab === "opname" && (
         <div className="bg-white rounded-3xl p-6 shadow-sm border border-pink-100 max-w-2xl">
           <h2 className="text-base font-extrabold text-gray-800 mb-1 flex items-center gap-2">
@@ -537,7 +909,7 @@ export default function InventoryPage() {
             <span>Stok Opname Tutup Kios LA Fried Chicken</span>
           </h2>
           <p className="text-xs text-gray-500 mb-4">
-            Hitung fisik riil sisa bahan saat kios tutup. Sistem akan menghitung estimasi pemakaian bahan secara akurat.
+            Hitung fisik riil sisa bahan saat kios tutup. Sistem akan mencatat penyesuaian stok dan menghitung estimasi pemakaian bahan secara akurat.
           </p>
 
           <form onSubmit={handleOpnameSubmit} className="space-y-3">
@@ -545,6 +917,7 @@ export default function InventoryPage() {
               {items.map((it) => {
                 const physicalVal = opnameCounts[it.id] ?? it.current_stock;
                 const used = Number(it.current_stock) - Number(physicalVal);
+                const priceInfo = getItemPriceDetails(it.id, Number(it.current_stock));
 
                 return (
                   <div
@@ -555,6 +928,7 @@ export default function InventoryPage() {
                       <h4 className="font-bold text-xs text-gray-800">{it.name}</h4>
                       <p className="text-[10px] text-gray-500">
                         Tercatat di sistem: <span className="font-bold">{it.current_stock} {it.unit}</span>
+                        {priceInfo.unitCost > 0 && ` (@ ${formatRupiah(priceInfo.unitCost)})`}
                       </p>
                     </div>
 
@@ -577,9 +951,11 @@ export default function InventoryPage() {
                       </div>
 
                       {used !== 0 && (
-                        <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${
-                          used > 0 ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"
-                        }`}>
+                        <span
+                          className={`text-[10px] font-bold px-2 py-1 rounded-lg ${
+                            used > 0 ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"
+                          }`}
+                        >
                           {used > 0 ? `Terpakai: ${used}` : `Lebih: +${Math.abs(used)}`}
                         </span>
                       )}
@@ -600,7 +976,7 @@ export default function InventoryPage() {
         </div>
       )}
 
-      {/* TAB 4: RIWAYAT PERGERAKAN */}
+      {/* TAB 5: RIWAYAT PERGERAKAN */}
       {activeTab === "logs" && (
         <div className="bg-white rounded-3xl p-5 shadow-sm border border-pink-100">
           <h2 className="text-sm font-extrabold text-gray-800 mb-3 flex items-center gap-2">
@@ -654,6 +1030,97 @@ export default function InventoryPage() {
                 Belum ada pergerakan bahan yang dicatat.
               </p>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL ATUR / UBAH HARGA MODAL SATUAN */}
+      {priceModalItem && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 animate-pop-in">
+          <div className="bg-white rounded-3xl p-6 shadow-2xl border border-pink-100 max-w-sm w-full space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-pink-100 text-rose-600 flex items-center justify-center">
+                  <Coins className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm text-gray-800">
+                    Atur Harga Modal
+                  </h3>
+                  <p className="text-[10px] text-gray-400">
+                    {priceModalItem.item.name}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPriceModalItem(null)}
+                className="p-1 text-gray-400 hover:text-gray-600 rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSavePriceModal} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  Harga Modal Satuan (Rp / {priceModalItem.item.unit})
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  step="any"
+                  value={modalInputPrice}
+                  onChange={(e) => setModalInputPrice(e.target.value)}
+                  placeholder="Contoh: 6500"
+                  className="w-full px-4 py-3 text-base font-black text-rose-600 bg-pink-50/50 border border-pink-200 rounded-2xl focus:ring-2 focus:ring-rose-400 text-right"
+                  required
+                  autoFocus
+                />
+                <span className="text-[11px] font-bold text-gray-500 block text-right mt-1">
+                  {formatRupiah(Number(modalInputPrice) || 0)} / {priceModalItem.item.unit}
+                </span>
+              </div>
+
+              <div className="bg-pink-50/60 rounded-2xl p-3 text-[11px] text-gray-600 space-y-1">
+                <div className="flex justify-between">
+                  <span>Sisa Stok Sekarang:</span>
+                  <span className="font-bold text-gray-800">
+                    {priceModalItem.item.current_stock} {priceModalItem.item.unit}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Estimasi Total Nilai:</span>
+                  <span className="font-bold text-rose-600">
+                    {formatRupiah(
+                      Number(priceModalItem.item.current_stock) * (Number(modalInputPrice) || 0)
+                    )}
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-[10px] text-gray-400 italic">
+                💡 Harga modal ini akan dipakai oleh sistem FIFO POS untuk menghitung HPP laba bersih dan nilai aset stok kios.
+              </p>
+
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setPriceModalItem(null)}
+                  className="flex-1 py-3 text-xs font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-2xl transition-all"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingPrice}
+                  className="flex-1 py-3 text-xs font-bold text-white bg-rose-500 hover:bg-rose-600 rounded-2xl shadow-md shadow-rose-200 transition-all flex items-center justify-center gap-1.5"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>{isSavingPrice ? "Menyimpan..." : "Simpan Harga"}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
