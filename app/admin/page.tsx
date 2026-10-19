@@ -3333,9 +3333,17 @@ export default function AdminPage() {
                   className="p-3 bg-pink-50/40 rounded-2xl border border-pink-100 flex items-center justify-between gap-2"
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    <span className="text-2xl p-2 bg-white rounded-xl shadow-xs shrink-0">
-                      {p.icon_or_image_url || "🍗"}
-                    </span>
+                    <div className="w-10 h-10 bg-white rounded-xl shadow-xs shrink-0 flex items-center justify-center overflow-hidden">
+                      {p.icon_or_image_url?.startsWith("http") ? (
+                        <img
+                          src={p.icon_or_image_url}
+                          alt={p.name}
+                          className="w-7 h-7 object-contain"
+                        />
+                      ) : (
+                        <span className="text-2xl">{p.icon_or_image_url || "🍗"}</span>
+                      )}
+                    </div>
                     <div className="min-w-0">
                       <h4 className="font-bold text-xs text-gray-800 truncate">{p.name}</h4>
 
