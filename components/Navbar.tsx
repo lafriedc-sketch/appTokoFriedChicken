@@ -77,7 +77,6 @@ export default function Navbar() {
 
   const navItems = [
     { label: "Kasir", href: "/", icon: ShoppingBag, emoji: "🛒" },
-    { label: "Etalase", href: "/frying", icon: Flame, emoji: "🍗" },
     { label: "Stok", href: "/inventory", icon: Package, emoji: "📦" },
     { label: "Laci Kas", href: "/drawer", icon: Wallet, emoji: "💵" },
     { label: "Laporan", href: "/reports", icon: BarChart3, emoji: "📊" },
