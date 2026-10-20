@@ -498,16 +498,16 @@ export default function DrawerPage() {
                     </button>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-2 group">
+                  <div className="flex items-center gap-2">
                     <span className="font-bold text-gray-900">
                       {formatRupiah(activeDrawer.initial_cash)}
                     </span>
                     <button 
                       onClick={() => setIsPinModalOpen(true)}
-                      className="p-1.5 rounded-lg text-gray-400 bg-white border border-pink-100 opacity-50 group-hover:opacity-100 hover:text-rose-600 hover:bg-pink-50 transition-all"
+                      className="p-1.5 rounded-lg text-rose-600 bg-rose-50 border border-rose-200 hover:bg-rose-100 hover:scale-105 transition-all shadow-xs"
                       title="Edit Modal Kas"
                     >
-                      <Edit3 className="w-3.5 h-3.5" />
+                      <Edit3 className="w-4 h-4" />
                     </button>
                   </div>
                 )}
