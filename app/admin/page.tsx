@@ -2906,7 +2906,15 @@ export default function AdminPage() {
                             }`}
                           >
                             <div className="min-w-0 flex items-center gap-1.5">
-                              <span className="text-base">{alacarte.icon_or_image_url || "🍗"}</span>
+                              {alacarte.icon_or_image_url?.startsWith("http") ? (
+                                <img
+                                  src={alacarte.icon_or_image_url}
+                                  alt={alacarte.name}
+                                  className="w-6 h-6 object-contain shrink-0"
+                                />
+                              ) : (
+                                <span className="text-base shrink-0">{alacarte.icon_or_image_url || "🍗"}</span>
+                              )}
                               <div className="truncate">
                                 <p className="text-[11px] font-bold text-gray-800 truncate">{alacarte.name}</p>
                                 <p className="text-[10px] font-semibold text-gray-400">{formatRupiah(alacarte.price)}</p>
