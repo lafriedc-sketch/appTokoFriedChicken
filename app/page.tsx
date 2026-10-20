@@ -928,8 +928,16 @@ export default function POSPage() {
 
                 <div>
                   {/* Icon/Emoji */}
-                  <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-pink-100 to-rose-50 flex items-center justify-center text-3xl mb-3 shadow-inner">
-                    {p.icon_or_image_url || "🍗"}
+                  <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-pink-100 to-rose-50 flex items-center justify-center text-3xl mb-3 shadow-inner overflow-hidden">
+                    {p.icon_or_image_url?.startsWith("http") ? (
+                      <img
+                        src={p.icon_or_image_url}
+                        alt={p.name}
+                        className="w-10 h-10 object-contain"
+                      />
+                    ) : (
+                      <span>{p.icon_or_image_url || "🍗"}</span>
+                    )}
                   </div>
                   <h3 className="font-extrabold text-sm text-gray-800 leading-tight mb-1">
                     {p.name}
