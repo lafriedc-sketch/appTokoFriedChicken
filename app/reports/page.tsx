@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { 
   BarChart, 
   Bar, 
@@ -41,6 +42,7 @@ import { Transaction, InventoryLog, FryingLog, RentSettings, AiAdvisorResult } f
 import { formatRupiah, formatDateIndo } from "@/lib/utils";
 
 export default function ReportsPage() {
+  const [isMounted, setIsMounted] = useState(false);
   const [timeFilter, setTimeFilter] = useState<"today" | "yesterday" | "7days" | "month" | "all">("today");
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [inventoryLogs, setInventoryLogs] = useState<InventoryLog[]>([]);
@@ -55,9 +57,11 @@ export default function ReportsPage() {
     accumulated_fund: 0,
   });
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-  const [editRent, setEditRent] = useState<number>(1500000);
-  const [editElectricity, setEditElectricity] = useState<number>(300000);
-  const [editDueDay, setEditDueDay] = useState<number>(25);
+
+  // Gunakan string pada state input agar mudah dihapus sampai kosong tanpa mental balik
+  const [editRent, setEditRent] = useState<string>("1500000");
+  const [editElectricity, setEditElectricity] = useState<string>("300000");
+  const [editDueDay, setEditDueDay] = useState<string>("25");
 
   // State AI Advisor
   const [aiResult, setAiResult] = useState<AiAdvisorResult | null>(null);
@@ -65,19 +69,28 @@ export default function ReportsPage() {
 
   // Load rent settings dari localStorage saat awal
   useEffect(() => {
+    setIsMounted(true);
     if (typeof window !== "undefined") {
       try {
         const stored = localStorage.getItem("la_rent_settings");
         if (stored) {
           const parsed = JSON.parse(stored);
           setRentSettings(parsed);
-          setEditRent(parsed.monthly_rent || 1500000);
-          setEditElectricity(parsed.monthly_electricity || 300000);
-          setEditDueDay(parsed.rent_due_day || 25);
+          setEditRent(String(parsed.monthly_rent ?? 1500000));
+          setEditElectricity(String(parsed.monthly_electricity ?? 300000));
+          setEditDueDay(String(parsed.rent_due_day ?? 25));
         }
       } catch {}
     }
   }, []);
+
+  // Fungsi buka modal sekaligus sinkronkan isi form dengan data terakhir yang tersimpan
+  const handleOpenSettingsModal = () => {
+    setEditRent(String(rentSettings.monthly_rent ?? 1500000));
+    setEditElectricity(String(rentSettings.monthly_electricity ?? 300000));
+    setEditDueDay(String(rentSettings.rent_due_day ?? 25));
+    setIsSettingsModalOpen(true);
+  };
 
   const fetchReportsData = async () => {
     try {
@@ -347,20 +360,48 @@ export default function ReportsPage() {
     }
   }, [timeFilter, grossSales, totalHpp, netProfit, marginPercentage, loading]);
 
-  // Simpan Target Sewa Baru
+  // Simpan Target Sewa Baru (Anti-Mental & Sinkron dengan Pos Beban Rutin)
   const handleSaveRentSettings = (e: React.FormEvent) => {
     e.preventDefault();
+
+    const parsedRent = editRent.trim() === "" ? 0 : Number(editRent);
+    const parsedElec = editElectricity.trim() === "" ? 0 : Number(editElectricity);
+    const parsedDay = editDueDay.trim() === "" ? 25 : Number(editDueDay);
+    const validDueDay = Math.min(31, Math.max(1, parsedDay));
+
+    // Sinkronkan juga ke array fixed_expenses jika ada supaya target total & penjelasan AI ikut berubah
+    let updatedFixedExpenses = rentSettings.fixed_expenses;
+    if (Array.isArray(rentSettings.fixed_expenses) && rentSettings.fixed_expenses.length > 0) {
+      updatedFixedExpenses = rentSettings.fixed_expenses.map((exp) => {
+        const lower = exp.name.toLowerCase();
+        if (lower.includes("sewa")) {
+          return { ...exp, amount: parsedRent };
+        }
+        if (lower.includes("listrik") || lower.includes("token")) {
+          return { ...exp, amount: parsedElec };
+        }
+        return exp;
+      });
+    }
+
     const updated: RentSettings = {
-      monthly_rent: Number(editRent) || 1500000,
-      monthly_electricity: Number(editElectricity) || 300000,
-      rent_due_day: Math.min(31, Math.max(1, Number(editDueDay) || 25)),
+      ...rentSettings,
+      monthly_rent: parsedRent,
+      monthly_electricity: parsedElec,
+      rent_due_day: validDueDay,
       accumulated_fund: rentSettings.accumulated_fund || 0,
-      fixed_expenses: rentSettings.fixed_expenses,
+      fixed_expenses: updatedFixedExpenses,
     };
+
     setRentSettings(updated);
+    setEditRent(String(parsedRent));
+    setEditElectricity(String(parsedElec));
+    setEditDueDay(String(validDueDay));
+
     if (typeof window !== "undefined") {
       localStorage.setItem("la_rent_settings", JSON.stringify(updated));
     }
+
     setIsSettingsModalOpen(false);
     runAiAdvisor(timeFilter, grossSales, totalHpp, filteredData.trans.length, netProfit, marginPercentage, updated);
   };
@@ -465,6 +506,19 @@ export default function ReportsPage() {
     document.body.removeChild(link);
   };
 
+  // Hitung sisa hari menuju tanggal jatuh tempo secara lokal (fallback akurat jika AI sedang loading)
+  const localDaysRemaining = useMemo(() => {
+    const now = new Date();
+    const currentDay = now.getDate();
+    const dueDay = rentSettings.rent_due_day || 25;
+    if (dueDay >= currentDay) {
+      return dueDay - currentDay;
+    } else {
+      const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+      return daysInMonth - currentDay + dueDay;
+    }
+  }, [rentSettings.rent_due_day]);
+
   // Nilai rekomendasi sisihan dari AI atau kalkulasi aman default
   const recSinkingAmount = aiResult?.recommendedSinkingFund?.amount ?? Math.round(grossSales * 0.1);
   const recSinkingPercent = aiResult?.recommendedSinkingFund?.percentage ?? 10;
@@ -472,7 +526,7 @@ export default function ReportsPage() {
   const safeMoneyPercent = aiResult?.safeMoneyToTake?.percentage ?? (grossSales > 0 ? ((safeMoneyAmount / grossSales) * 100).toFixed(0) : "0");
   const targetTotalBeban = Array.isArray(rentSettings.fixed_expenses) && rentSettings.fixed_expenses.length > 0
     ? rentSettings.fixed_expenses.reduce((sum: number, item) => sum + (Number(item.amount) || 0), 0)
-    : (rentSettings.monthly_rent || 1500000) + (rentSettings.monthly_electricity || 300000);
+    : (Number(rentSettings.monthly_rent) || 0) + (Number(rentSettings.monthly_electricity) || 0);
 
   return (
     <div className="space-y-6 pb-12">
@@ -551,7 +605,8 @@ export default function ReportsPage() {
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setIsSettingsModalOpen(true)}
+              type="button"
+              onClick={handleOpenSettingsModal}
               className="px-3.5 py-2 rounded-xl bg-pink-50 text-gray-700 hover:bg-pink-100 text-xs font-bold border border-pink-200 flex items-center gap-1.5 transition-all btn-bounce"
             >
               <Sliders className="w-3.5 h-3.5 text-rose-500" />
@@ -559,6 +614,7 @@ export default function ReportsPage() {
             </button>
 
             <button
+              type="button"
               onClick={() => runAiAdvisor()}
               disabled={loadingAi}
               className="px-3 py-2 rounded-xl bg-rose-500 text-white text-xs font-bold shadow-sm hover:bg-rose-600 disabled:opacity-50 flex items-center gap-1.5 transition-all btn-bounce"
@@ -658,7 +714,7 @@ export default function ReportsPage() {
                 Jatuh Tempo Sewa: Setiap Tanggal {rentSettings.rent_due_day}
               </span>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-rose-100 text-rose-700">
-                {aiResult?.dueDateStatus?.daysRemaining ?? 0} Hari Tersisa
+                {aiResult?.dueDateStatus?.daysRemaining ?? localDaysRemaining} Hari Tersisa
               </span>
             </div>
             <div className="text-xs font-bold text-gray-600">
@@ -672,7 +728,7 @@ export default function ReportsPage() {
           </div>
 
           <div className="text-xs text-gray-600 mb-2 font-medium">
-            💡 {aiResult?.dueDateStatus?.statusText || "Memeriksa status jatuh tempo sewa..."}
+            💡 {aiResult?.dueDateStatus?.statusText || `Jatuh tempo setiap tanggal ${rentSettings.rent_due_day} (${localDaysRemaining} hari lagi). Target beban rutin: ${formatRupiah(targetTotalBeban)}/bulan.`}
           </div>
 
           <div className="w-full bg-pink-100 rounded-full h-2.5 overflow-hidden">
@@ -843,7 +899,7 @@ export default function ReportsPage() {
           </div>
 
           <div className="space-y-2.5">
-            {cashierRanking.map((c, idx) => (
+            {cashierRanking.map((c) => (
               <div
                 key={c.name}
                 className="p-3 bg-pink-50/40 rounded-2xl border border-pink-100 flex items-center justify-between text-xs"
@@ -938,123 +994,137 @@ export default function ReportsPage() {
       </div>
 
       {/* ============================================================================== */}
-      {/* ⚙️ MODAL PENGATURAN TARGET SEWA & TANGGAL JATUH TEMPO                          */}
+      {/* ⚙️ MODAL PENGATURAN TARGET SEWA & TANGGAL JATUH TEMPO (PORTAL BODY)           */}
       {/* ============================================================================== */}
-      {isSettingsModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl border border-pink-200 animate-pop-in space-y-4">
-            <div className="flex items-center justify-between border-b border-pink-100 pb-3">
-              <div className="flex items-center gap-2">
-                <span className="text-xl">⚙️</span>
-                <h3 className="font-extrabold text-base text-gray-800">
-                  Target Sewa & Jatuh Tempo
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsSettingsModalOpen(false)}
-                className="w-8 h-8 rounded-full bg-pink-50 text-gray-500 hover:bg-pink-100 flex items-center justify-center text-xs"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <p className="text-xs text-gray-500">
-              Data ini dipakai oleh AI untuk menghitung rekomendasi persentase sisihan harian dan uang yang aman lu ambil.
-            </p>
-
-            {Array.isArray(rentSettings.fixed_expenses) && rentSettings.fixed_expenses.length > 0 && (
-              <div className="p-3 bg-pink-50/70 rounded-2xl border border-pink-100 space-y-2">
-                <div className="flex items-center justify-between text-xs font-bold text-gray-800">
-                  <span>Daftar Pos Beban Rutin:</span>
-                  <span className="text-rose-600 font-black">{formatRupiah(targetTotalBeban)} / bln</span>
-                </div>
-                <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                  {rentSettings.fixed_expenses.map((exp) => (
-                    <div key={exp.id} className="flex items-center justify-between text-[11px] bg-white px-2.5 py-1.5 rounded-xl border border-pink-100">
-                      <span className="font-semibold text-gray-700">{exp.name}</span>
-                      <span className="font-bold text-gray-900">{formatRupiah(exp.amount)}</span>
-                    </div>
-                  ))}
-                </div>
-                <a
-                  href="/admin"
-                  className="block text-center text-[10px] font-bold text-rose-600 hover:underline pt-1"
-                >
-                  ⚙️ Tambah / Edit Pos Pengeluaran di Menu Admin &rarr;
-                </a>
-              </div>
-            )}
-
-            <form onSubmit={handleSaveRentSettings} className="space-y-3.5">
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">
-                  Biaya Sewa Toko per Bulan (Rp)
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  step="50000"
-                  value={editRent}
-                  onChange={(e) => setEditRent(Number(e.target.value) || 0)}
-                  className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-bold"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">
-                  Estimasi Token Listrik per Bulan (Rp)
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  step="20000"
-                  value={editElectricity}
-                  onChange={(e) => setEditElectricity(Number(e.target.value) || 0)}
-                  className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-bold"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">
-                  Tanggal Jatuh Tempo Bayar Sewa (Setiap Bulan)
-                </label>
+      {isMounted &&
+        isSettingsModalOpen &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[1050] bg-gray-950/60 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => setIsSettingsModalOpen(false)}
+          >
+            <div
+              className="bg-white rounded-3xl p-5 sm:p-6 w-full max-w-md shadow-2xl border border-pink-200 space-y-4 max-h-[90dvh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-pink-100 pb-3">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-500 font-semibold">Tanggal:</span>
-                  <input
-                    type="number"
-                    min="1"
-                    max="31"
-                    value={editDueDay}
-                    onChange={(e) => setEditDueDay(Number(e.target.value) || 25)}
-                    className="w-24 px-3 py-2 text-xs font-black text-center bg-pink-50/50 border border-pink-200 rounded-xl text-rose-600"
-                    required
-                  />
-                  <span className="text-xs text-gray-500">setiap bulannya</span>
+                  <span className="text-xl">⚙️</span>
+                  <h3 className="font-extrabold text-base text-gray-800">
+                    Target Sewa & Jatuh Tempo
+                  </h3>
                 </div>
-              </div>
-
-              <div className="pt-2 flex gap-2">
                 <button
                   type="button"
                   onClick={() => setIsSettingsModalOpen(false)}
-                  className="w-1/2 py-2.5 rounded-xl border border-gray-200 text-gray-600 font-bold text-xs hover:bg-gray-50"
+                  className="w-8 h-8 rounded-full bg-pink-50 text-gray-500 hover:bg-pink-100 flex items-center justify-center text-xs"
                 >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  className="w-1/2 py-2.5 rounded-xl bg-rose-500 text-white font-bold text-xs shadow-md shadow-rose-200 hover:bg-rose-600 btn-bounce"
-                >
-                  Simpan & Terapkan
+                  <X className="w-4 h-4" />
                 </button>
               </div>
-            </form>
-          </div>
-        </div>
-      )}
+
+              <p className="text-xs text-gray-500">
+                Data ini dipakai oleh AI untuk menghitung rekomendasi persentase sisihan harian dan uang yang aman lu ambil.
+              </p>
+
+              {Array.isArray(rentSettings.fixed_expenses) && rentSettings.fixed_expenses.length > 0 && (
+                <div className="p-3 bg-pink-50/70 rounded-2xl border border-pink-100 space-y-2">
+                  <div className="flex items-center justify-between text-xs font-bold text-gray-800">
+                    <span>Daftar Pos Beban Rutin:</span>
+                    <span className="text-rose-600 font-black">{formatRupiah(targetTotalBeban)} / bln</span>
+                  </div>
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                    {rentSettings.fixed_expenses.map((exp) => (
+                      <div key={exp.id} className="flex items-center justify-between text-[11px] bg-white px-2.5 py-1.5 rounded-xl border border-pink-100">
+                        <span className="font-semibold text-gray-700">{exp.name}</span>
+                        <span className="font-bold text-gray-900">{formatRupiah(exp.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <a
+                    href="/admin"
+                    className="block text-center text-[10px] font-bold text-rose-600 hover:underline pt-1"
+                  >
+                    ⚙️ Tambah / Edit Pos Pengeluaran di Menu Admin &rarr;
+                  </a>
+                </div>
+              )}
+
+              <form onSubmit={handleSaveRentSettings} noValidate className="space-y-3.5">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">
+                    Biaya Sewa Toko per Bulan (Rp)
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="Contoh: 600000"
+                    value={editRent}
+                    onChange={(e) => setEditRent(e.target.value.replace(/[^0-9]/g, ""))}
+                    className="w-full px-3.5 py-2.5 text-sm bg-pink-50/50 border border-pink-200 rounded-xl font-black text-gray-800 focus:outline-none focus:ring-2 focus:ring-rose-400"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">
+                    Estimasi Token Listrik per Bulan (Rp)
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="Contoh: 150000"
+                    value={editElectricity}
+                    onChange={(e) => setEditElectricity(e.target.value.replace(/[^0-9]/g, ""))}
+                    className="w-full px-3.5 py-2.5 text-sm bg-pink-50/50 border border-pink-200 rounded-xl font-black text-gray-800 focus:outline-none focus:ring-2 focus:ring-rose-400"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">
+                    Tanggal Jatuh Tempo Bayar Sewa (1 - 31)
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500 font-semibold">Tanggal:</span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="10"
+                      value={editDueDay}
+                      onChange={(e) => {
+                        const raw = e.target.value.replace(/[^0-9]/g, "");
+                        if (raw === "") {
+                          setEditDueDay("");
+                        } else {
+                          const num = Math.min(31, Number(raw));
+                          setEditDueDay(String(num));
+                        }
+                      }}
+                      className="w-24 px-3 py-2.5 text-sm font-black text-center bg-pink-50/50 border border-pink-200 rounded-xl text-rose-600 focus:outline-none focus:ring-2 focus:ring-rose-400"
+                    />
+                    <span className="text-xs text-gray-500">setiap bulannya</span>
+                  </div>
+                </div>
+
+                <div className="pt-2 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsSettingsModalOpen(false)}
+                    className="w-1/2 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold text-xs hover:bg-gray-50"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    className="w-1/2 py-3 rounded-xl bg-rose-500 text-white font-bold text-xs shadow-md shadow-rose-200 hover:bg-rose-600 active:scale-95 transition-transform"
+                  >
+                    Simpan & Terapkan
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
