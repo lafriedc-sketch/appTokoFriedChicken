@@ -65,9 +65,9 @@ export default function AdminPage() {
     admin_pin: "1234",
   });
   const [newPin, setNewPin] = useState("");
-  const [adminMonthlyRent, setAdminMonthlyRent] = useState<number>(1500000);
-  const [adminMonthlyElectricity, setAdminMonthlyElectricity] = useState<number>(300000);
-  const [adminRentDueDay, setAdminRentDueDay] = useState<number>(25);
+  const [adminMonthlyRent, setAdminMonthlyRent] = useState<number | string>(1500000);
+  const [adminMonthlyElectricity, setAdminMonthlyElectricity] = useState<number | string>(300000);
+  const [adminRentDueDay, setAdminRentDueDay] = useState<number | string>(25);
   const [fixedExpenses, setFixedExpenses] = useState<FixedExpenseItem[]>([
     { id: "exp_1", name: "Sewa Toko / Kios", amount: 1500000 },
     { id: "exp_2", name: "Token Listrik & Air", amount: 300000 },
@@ -113,20 +113,20 @@ export default function AdminPage() {
     id: string;
     name: string;
     category: string;
-    price: number;
+    price: number | string;
     is_available: boolean;
     icon_or_image_url: string;
-    original_price: number;
-    discount_percent: number;
+    original_price: number | string;
+    discount_percent: number | string;
     promo_items: PromoItemComponent[];
   }>({
     id: "",
     name: "",
     category: "Ayam",
-    price: 0,
+    price: "",
     is_available: true,
     icon_or_image_url: "🍗",
-    original_price: 0,
+    original_price: "",
     discount_percent: 20,
     promo_items: [],
   });
@@ -253,7 +253,7 @@ export default function AdminPage() {
       ...prev,
       {
         inventory_item_id: firstMain?.id || "",
-        qty_required: 1,
+        qty_required: "",
         selected_unit: compUnits[0] || firstMain?.unit || "",
       },
     ]);
@@ -292,7 +292,7 @@ export default function AdminPage() {
       ...prev,
       {
         inventory_item_id: firstPack?.id || "",
-        qty_required: 1,
+        qty_required: "",
         selected_unit: compUnits[0] || firstPack?.unit || "",
       },
     ]);
@@ -331,7 +331,7 @@ export default function AdminPage() {
       ...prev,
       {
         inventory_item_id: firstMain?.id || "",
-        qty_required: 1,
+        qty_required: "",
         selected_unit: compUnits[0] || firstMain?.unit || "",
       },
     ]);
@@ -370,7 +370,7 @@ export default function AdminPage() {
       ...prev,
       {
         inventory_item_id: firstPack?.id || "",
-        qty_required: 1,
+        qty_required: "",
         selected_unit: compUnits[0] || firstPack?.unit || "",
       },
     ]);
@@ -435,7 +435,7 @@ export default function AdminPage() {
       );
 
       // Hitung harga promo baru berdasarkan diskon persen
-      const discount = prev.discount_percent || 20;
+      const discount = Number(prev.discount_percent) || 20;
       const promoPrice = normalPrice > 0 ? Math.round((normalPrice * (100 - discount)) / 100) : 0;
 
       // Buat saran nama promo otomatis jika nama masih kosong atau diawali "Promo"
@@ -457,10 +457,11 @@ export default function AdminPage() {
   };
 
   // Ubah persentase diskon promo
-  const handleApplyDiscountPercent = (percent: number) => {
+  const handleApplyDiscountPercent = (percent: number | string) => {
     setProductForm((prev) => {
-      const normalPrice = prev.original_price || 0;
-      const promoPrice = normalPrice > 0 ? Math.round((normalPrice * (100 - percent)) / 100) : prev.price;
+      const normalPrice = Number(prev.original_price) || 0;
+      const pctNum = Number(percent) || 0;
+      const promoPrice = normalPrice > 0 ? Math.round((normalPrice * (100 - pctNum)) / 100) : Number(prev.price) || 0;
       return {
         ...prev,
         discount_percent: percent,
@@ -470,22 +471,33 @@ export default function AdminPage() {
   };
 
   // Addon Form
-  const [addonForm, setAddonForm] = useState({
+  const [addonForm, setAddonForm] = useState<{
+    id: string;
+    name: string;
+    price: number | string;
+  }>({
     id: "",
     name: "",
-    price: 0,
+    price: "",
   });
   const [isEditingAddon, setIsEditingAddon] = useState(false);
 
   // Inventory Item Form & Cost Mapping
   const [inventoryCostMap, setInventoryCostMap] = useState<Record<string, number>>({});
-  const [inventoryForm, setInventoryForm] = useState({
+  const [inventoryForm, setInventoryForm] = useState<{
+    id: string;
+    name: string;
+    unit: string;
+    min_stock: number | string;
+    current_stock: number | string;
+    cost_per_unit: number | string;
+  }>({
     id: "",
     name: "",
     unit: "potong",
-    min_stock: 10,
-    current_stock: 50,
-    cost_per_unit: 0,
+    min_stock: "",
+    current_stock: "",
+    cost_per_unit: "",
   });
   const [isEditingInventory, setIsEditingInventory] = useState(false);
 
@@ -1093,18 +1105,18 @@ export default function AdminPage() {
     const promoPayload = {
       name: productForm.name.trim(),
       category: productForm.category,
-      price: Number(productForm.price),
+      price: Number(productForm.price) || 0,
       is_available: productForm.is_available,
       icon_or_image_url: productForm.icon_or_image_url || (isPromo ? "🔥" : "🍗"),
-      original_price: isPromo ? Number(productForm.original_price || 0) : null,
-      discount_percent: isPromo ? Number(productForm.discount_percent || 0) : null,
+      original_price: isPromo ? (Number(productForm.original_price) || null) : null,
+      discount_percent: isPromo ? (Number(productForm.discount_percent) || null) : null,
       promo_items: isPromo ? productForm.promo_items : null,
     };
 
     const basePayload = {
       name: productForm.name.trim(),
       category: productForm.category,
-      price: Number(productForm.price),
+      price: Number(productForm.price) || 0,
       is_available: productForm.is_available,
       icon_or_image_url: productForm.icon_or_image_url || (isPromo ? "🔥" : "🍗"),
     };
@@ -1209,10 +1221,10 @@ export default function AdminPage() {
         id: "",
         name: "",
         category: "Ayam",
-        price: 0,
+        price: "",
         is_available: true,
         icon_or_image_url: "🍗",
-        original_price: 0,
+        original_price: "",
         discount_percent: 20,
         promo_items: [],
       });
@@ -1230,11 +1242,11 @@ export default function AdminPage() {
       id: p.id,
       name: p.name,
       category: p.category,
-      price: p.price,
+      price: p.price > 0 ? p.price : "",
       is_available: p.is_available,
       icon_or_image_url: p.icon_or_image_url || (p.category === "Promo" ? "🔥" : "🍗"),
-      original_price: p.original_price || 0,
-      discount_percent: p.discount_percent || 20,
+      original_price: p.original_price && p.original_price > 0 ? p.original_price : "",
+      discount_percent: p.discount_percent && p.discount_percent > 0 ? p.discount_percent : 20,
       promo_items: p.promo_items || [],
     });
 
@@ -1349,7 +1361,7 @@ export default function AdminPage() {
           .from("product_addons")
           .update({
             name: addonForm.name.trim(),
-            price: Number(addonForm.price),
+            price: Number(addonForm.price) || 0,
           })
           .eq("id", addonForm.id);
 
@@ -1360,7 +1372,7 @@ export default function AdminPage() {
           .from("product_addons")
           .insert({
             name: addonForm.name.trim(),
-            price: Number(addonForm.price),
+            price: Number(addonForm.price) || 0,
           })
           .select()
           .single();
@@ -1414,7 +1426,7 @@ export default function AdminPage() {
 
       setAddonMainIngredients([]);
       setAddonPackagingItems([]);
-      setAddonForm({ id: "", name: "", price: 0 });
+      setAddonForm({ id: "", name: "", price: "" });
       setIsEditingAddon(false);
       fetchAllData();
     } catch (err: any) {
@@ -1428,7 +1440,7 @@ export default function AdminPage() {
     setAddonForm({
       id: a.id,
       name: a.name,
-      price: a.price,
+      price: a.price > 0 ? a.price : "",
     });
 
     // Lakukan fetch data dari addon_recipes berdasarkan addon_id
@@ -1525,8 +1537,8 @@ export default function AdminPage() {
           .update({
             name: inventoryForm.name,
             unit: inventoryForm.unit,
-            min_stock: Number(inventoryForm.min_stock),
-            current_stock: Number(inventoryForm.current_stock),
+            min_stock: Number(inventoryForm.min_stock) || 0,
+            current_stock: Number(inventoryForm.current_stock) || 0,
           })
           .eq("id", inventoryForm.id);
 
@@ -1538,8 +1550,8 @@ export default function AdminPage() {
           .insert({
             name: inventoryForm.name,
             unit: inventoryForm.unit,
-            min_stock: Number(inventoryForm.min_stock),
-            current_stock: Number(inventoryForm.current_stock),
+            min_stock: Number(inventoryForm.min_stock) || 0,
+            current_stock: Number(inventoryForm.current_stock) || 0,
           })
           .select()
           .single();
@@ -1590,9 +1602,9 @@ export default function AdminPage() {
         id: "",
         name: "",
         unit: "potong",
-        min_stock: 10,
-        current_stock: 50,
-        cost_per_unit: 0,
+        min_stock: "",
+        current_stock: "",
+        cost_per_unit: "",
       });
       setIsEditingInventory(false);
       fetchAllData();
@@ -2526,7 +2538,7 @@ export default function AdminPage() {
                           <input
                             type="number"
                             min="0"
-                            step="10000"
+                            step="any"
                             value={editExpenseAmount}
                             onChange={(e) => setEditExpenseAmount(e.target.value)}
                             placeholder="Nominal (Rp)"
@@ -2625,7 +2637,7 @@ export default function AdminPage() {
                     <input
                       type="number"
                       min="0"
-                      step="10000"
+                      step="any"
                       value={newExpenseAmount}
                       onChange={(e) => setNewExpenseAmount(e.target.value)}
                       placeholder="Nominal / bln (Rp)"
@@ -2715,10 +2727,10 @@ export default function AdminPage() {
                       id: "",
                       name: "",
                       category: "Ayam",
-                      price: 0,
+                      price: "",
                       is_available: true,
                       icon_or_image_url: "🍗",
-                      original_price: 0,
+                      original_price: "",
                       discount_percent: 20,
                       promo_items: [],
                     });
@@ -2942,7 +2954,7 @@ export default function AdminPage() {
                       <div className="text-[11px] font-bold text-gray-700 flex items-center justify-between">
                         <span>Rincian Komponen Paket:</span>
                         <span className="text-gray-500">
-                          Total Normal: <strong className="text-gray-800">{formatRupiah(productForm.original_price || 0)}</strong>
+                          Total Normal: <strong className="text-gray-800">{formatRupiah(Number(productForm.original_price) || 0)}</strong>
                         </span>
                       </div>
                       <div className="flex flex-wrap gap-1.5">
@@ -2971,8 +2983,9 @@ export default function AdminPage() {
                           type="number"
                           min="0"
                           max="100"
+                          step="any"
                           value={productForm.discount_percent ?? 20}
-                          onChange={(e) => handleApplyDiscountPercent(Number(e.target.value) || 0)}
+                          onChange={(e) => handleApplyDiscountPercent(e.target.value)}
                           className="w-14 px-2 py-1 text-xs text-center font-black bg-white border border-rose-300 rounded-lg text-rose-600 focus:ring-2 focus:ring-rose-400"
                         />
                         <span className="text-xs font-black text-rose-600">%</span>
@@ -2988,7 +3001,7 @@ export default function AdminPage() {
                           type="button"
                           onClick={() => handleApplyDiscountPercent(disc)}
                           className={`px-2 py-0.5 rounded-lg text-[10px] font-black transition-all ${
-                            productForm.discount_percent === disc
+                            Number(productForm.discount_percent) === disc
                               ? "bg-rose-500 text-white shadow-xs"
                               : "bg-white text-gray-600 border border-gray-200 hover:border-rose-300 hover:text-rose-600"
                           }`}
@@ -3003,15 +3016,15 @@ export default function AdminPage() {
                       <div>
                         <div className="text-[10px] text-gray-500 flex items-center gap-1">
                           <span>Total Normal:</span>
-                          <span className="line-through text-gray-400 font-semibold">{formatRupiah(productForm.original_price || 0)}</span>
+                          <span className="line-through text-gray-400 font-semibold">{formatRupiah(Number(productForm.original_price) || 0)}</span>
                         </div>
                         <div className="text-[10px] font-bold text-emerald-600 mt-0.5">
-                          Hemat {formatRupiah(Math.max(0, (productForm.original_price || 0) - (productForm.price || 0)))} ({productForm.discount_percent || 0}%)
+                          Hemat {formatRupiah(Math.max(0, (Number(productForm.original_price) || 0) - (Number(productForm.price) || 0)))} ({Number(productForm.discount_percent) || 0}%)
                         </div>
                       </div>
                       <div className="text-right">
                         <span className="text-[10px] font-bold text-rose-600 block uppercase">Harga Jual Promo</span>
-                        <span className="text-base font-black text-rose-600">{formatRupiah(productForm.price || 0)}</span>
+                        <span className="text-base font-black text-rose-600">{formatRupiah(Number(productForm.price) || 0)}</span>
                       </div>
                     </div>
                   </div>
@@ -3024,8 +3037,9 @@ export default function AdminPage() {
                 </label>
                 <input
                   type="number"
-                  value={productForm.price || ""}
-                  onChange={(e) => setProductForm({ ...productForm, price: Number(e.target.value) || 0 })}
+                  step="any"
+                  value={productForm.price}
+                  onChange={(e) => setProductForm({ ...productForm, price: e.target.value })}
                   className="w-full px-3.5 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-bold text-rose-600 focus:ring-2 focus:ring-rose-400"
                   required
                 />
@@ -3146,7 +3160,7 @@ export default function AdminPage() {
                                   step="any"
                                   min="0.0001"
                                   placeholder="Qty"
-                                  value={row.qty_required || ""}
+                                  value={row.qty_required}
                                   onChange={(e) => handleUpdateMainIngredient(idx, "qty_required", e.target.value)}
                                   className="w-20 px-2 py-1.5 text-xs font-bold text-gray-800 text-right outline-none"
                                   required
@@ -3263,7 +3277,7 @@ export default function AdminPage() {
                                   step="any"
                                   min="0.0001"
                                   placeholder="Qty"
-                                  value={row.qty_required || ""}
+                                  value={row.qty_required}
                                   onChange={(e) => handleUpdatePackagingItem(idx, "qty_required", e.target.value)}
                                   className="w-20 px-2 py-1.5 text-xs font-bold text-gray-800 text-right outline-none"
                                   required
@@ -3365,20 +3379,20 @@ export default function AdminPage() {
                           {p.category === "Promo" ? "🔥 Promo" : p.category}
                         </span>
 
-                        {p.category === "Promo" && p.discount_percent && p.discount_percent > 0 ? (
+                        {p.category === "Promo" && p.discount_percent && Number(p.discount_percent) > 0 ? (
                           <span className="text-[9px] font-black px-1.5 py-0.2 bg-red-500 text-white rounded-md">
                             -{p.discount_percent}%
                           </span>
                         ) : null}
 
-                        {p.original_price && p.original_price > p.price ? (
+                        {p.original_price && Number(p.original_price) > Number(p.price) ? (
                           <span className="text-[10px] line-through text-gray-400 font-semibold">
-                            {formatRupiah(p.original_price)}
+                            {formatRupiah(Number(p.original_price))}
                           </span>
                         ) : null}
 
                         <span className="text-xs font-black text-rose-600">
-                          {formatRupiah(p.price)}
+                          {formatRupiah(Number(p.price))}
                         </span>
 
                         {productRecipesMap[p.id] ? (
@@ -3444,7 +3458,7 @@ export default function AdminPage() {
                     setIsEditingAddon(false);
                     setAddonMainIngredients([]);
                     setAddonPackagingItems([]);
-                    setAddonForm({ id: "", name: "", price: 0 });
+                    setAddonForm({ id: "", name: "", price: "" });
                   }}
                   className="text-xs text-rose-500 hover:underline font-normal"
                 >
@@ -3470,8 +3484,9 @@ export default function AdminPage() {
                 <label className="block text-xs font-bold text-gray-700 mb-1">Harga Tambahan (Rp)</label>
                 <input
                   type="number"
-                  value={addonForm.price || ""}
-                  onChange={(e) => setAddonForm({ ...addonForm, price: Number(e.target.value) || 0 })}
+                  step="any"
+                  value={addonForm.price}
+                  onChange={(e) => setAddonForm({ ...addonForm, price: e.target.value })}
                   className="w-full px-3.5 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-bold text-rose-600"
                   required
                 />
@@ -3574,7 +3589,7 @@ export default function AdminPage() {
                                   step="any"
                                   min="0.0001"
                                   placeholder="Qty"
-                                  value={row.qty_required || ""}
+                                  value={row.qty_required}
                                   onChange={(e) => handleUpdateAddonMainIngredient(idx, "qty_required", e.target.value)}
                                   className="w-20 px-2 py-1.5 text-xs font-bold text-gray-800 text-right outline-none"
                                   required
@@ -3691,7 +3706,7 @@ export default function AdminPage() {
                                   step="any"
                                   min="0.0001"
                                   placeholder="Qty"
-                                  value={row.qty_required || ""}
+                                  value={row.qty_required}
                                   onChange={(e) => handleUpdateAddonPackagingItem(idx, "qty_required", e.target.value)}
                                   className="w-20 px-2 py-1.5 text-xs font-bold text-gray-800 text-right outline-none"
                                   required
@@ -3814,9 +3829,9 @@ export default function AdminPage() {
                       id: "",
                       name: "",
                       unit: "potong",
-                      min_stock: 10,
-                      current_stock: 50,
-                      cost_per_unit: 0,
+                      min_stock: "",
+                      current_stock: "",
+                      cost_per_unit: "",
                     });
                   }}
                   className="text-xs text-rose-500 hover:underline font-normal"
@@ -3863,8 +3878,9 @@ export default function AdminPage() {
                   <label className="block text-xs font-bold text-gray-700 mb-1">Batas Minimum Stok</label>
                   <input
                     type="number"
+                    step="any"
                     value={inventoryForm.min_stock}
-                    onChange={(e) => setInventoryForm({ ...inventoryForm, min_stock: Number(e.target.value) || 0 })}
+                    onChange={(e) => setInventoryForm({ ...inventoryForm, min_stock: e.target.value })}
                     className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl"
                   />
                 </div>
@@ -3877,7 +3893,7 @@ export default function AdminPage() {
                     type="number"
                     step="any"
                     value={inventoryForm.current_stock}
-                    onChange={(e) => setInventoryForm({ ...inventoryForm, current_stock: Number(e.target.value) || 0 })}
+                    onChange={(e) => setInventoryForm({ ...inventoryForm, current_stock: e.target.value })}
                     className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-bold"
                   />
                 </div>
@@ -3890,12 +3906,12 @@ export default function AdminPage() {
                     type="number"
                     step="any"
                     placeholder="0"
-                    value={inventoryForm.cost_per_unit || ""}
-                    onChange={(e) => setInventoryForm({ ...inventoryForm, cost_per_unit: Number(e.target.value) || 0 })}
+                    value={inventoryForm.cost_per_unit}
+                    onChange={(e) => setInventoryForm({ ...inventoryForm, cost_per_unit: e.target.value })}
                     className="w-full px-3 py-2 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-bold text-rose-600"
                   />
                   <span className="text-[10px] text-gray-400 mt-0.5 block truncate">
-                    {inventoryForm.cost_per_unit ? formatRupiah(inventoryForm.cost_per_unit) : "Rp 0"}
+                    {Number(inventoryForm.cost_per_unit) > 0 ? formatRupiah(Number(inventoryForm.cost_per_unit)) : "Rp 0"}
                   </span>
                 </div>
               </div>
@@ -3969,9 +3985,9 @@ export default function AdminPage() {
                             id: item.id,
                             name: item.name,
                             unit: item.unit,
-                            min_stock: item.min_stock,
-                            current_stock: item.current_stock,
-                            cost_per_unit: inventoryCostMap[item.id] || 0,
+                            min_stock: item.min_stock > 0 ? item.min_stock : "",
+                            current_stock: item.current_stock > 0 ? item.current_stock : "",
+                            cost_per_unit: inventoryCostMap[item.id] > 0 ? inventoryCostMap[item.id] : "",
                           });
                         }}
                         className="p-2 text-gray-500 hover:text-rose-600 hover:bg-white rounded-xl transition-colors"
