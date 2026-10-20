@@ -134,10 +134,6 @@ export default function POSPage() {
   const [isDrawerOpenModal, setIsDrawerOpenModal] = useState(false);
   const [hasCheckedDrawer, setHasCheckedDrawer] = useState(false);
 
-  // Addon selection modal when clicking a product
-  const [selectedProductForAddon, setSelectedProductForAddon] = useState<Product | null>(null);
-  const [tempSelectedAddons, setTempSelectedAddons] = useState<ProductAddon[]>([]);
-
   // Checkout modal & payment
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [isQrisZoomOpen, setIsQrisZoomOpen] = useState(false);
@@ -292,10 +288,9 @@ export default function POSPage() {
   const handleProductClick = (e: React.MouseEvent<HTMLDivElement>, product: Product) => {
     if (!product.is_available) return;
 
-    // Hitung posisi klik untuk memunculkan efek +1 terbang
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
+    // Ambil posisi klik jari secara presisi dari ClientX / ClientY
+    const x = e.clientX;
+    const y = e.clientY;
     const newEffect = { id: Date.now(), x, y };
     
     setClickEffects(prev => [...prev, newEffect]);
@@ -729,15 +724,12 @@ export default function POSPage() {
 
   return (
     <div className="pb-28 lg:pb-8">
-      {/* GLOBAL STYLES UNTUK ANIMASI +1 */}
+      {/* GLOBAL STYLES UNTUK ANIMASI +1 TERBANG */}
       <style dangerouslySetInnerHTML={{__html: `
         @keyframes flyUpFade {
           0% { transform: translate(-50%, -50%) scale(0.5); opacity: 1; }
-          50% { transform: translate(-50%, -80px) scale(1.5); opacity: 1; }
-          100% { transform: translate(-50%, -120px) scale(1); opacity: 0; }
-        }
-        .animate-fly-up {
-          animation: flyUpFade 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+          40% { transform: translate(-50%, -80px) scale(1.5); opacity: 1; }
+          100% { transform: translate(-50%, -130px) scale(1); opacity: 0; }
         }
       `}} />
 
@@ -745,8 +737,12 @@ export default function POSPage() {
       {clickEffects.map(effect => (
         <div
           key={effect.id}
-          className="fixed z-[100] text-rose-500 font-black text-2xl drop-shadow-md pointer-events-none animate-fly-up"
-          style={{ left: effect.x, top: effect.y }}
+          className="fixed z-[9999] text-rose-500 font-black text-2xl drop-shadow-md pointer-events-none"
+          style={{ 
+            left: effect.x, 
+            top: effect.y,
+            animation: 'flyUpFade 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) forwards'
+          }}
         >
           +1
         </div>
@@ -791,8 +787,11 @@ export default function POSPage() {
 
       {/* Floating Mobile Cart Bar (Khusus Layar HP) */}
       {cart.length > 0 && !isMobileCartOpen && !isCheckoutOpen && (
-        <div className="fixed bottom-[72px] left-4 right-4 z-40 lg:hidden animate-pop-in">
-          {/* FUNGSI ONCLICK DIUBAH: LANGSUNG BUKA POP-UP KERANJANG, NO SCROLL */}
+        <div 
+          className="fixed bottom-[72px] left-4 right-4 z-[100] lg:hidden"
+          style={{ position: 'fixed' }}
+        >
+          {/* FUNGSI ONCLICK: MUNCULIN POP-UP KERANJANG, NO SCROLL */}
           <button
             onClick={() => setIsMobileCartOpen(true)}
             className="w-full bg-rose-600 text-white shadow-xl shadow-rose-300 rounded-2xl p-3.5 flex items-center justify-between active:scale-95 transition-transform border border-rose-400"
@@ -986,7 +985,7 @@ export default function POSPage() {
         </div>
 
         {/* KERANJANG KASIR (VERSI DESKTOP) */}
-        {/* Disembunyikan di layar HP via class "hidden lg:block" */}
+        {/* Disembunyikan SANGAT RAPAT di layar HP via class "hidden lg:block" */}
         <div className="hidden lg:block lg:col-span-4 sticky top-20">
           <div className="bg-white rounded-3xl p-5 shadow-sm border border-pink-100">
             {/* Header Keranjang Desktop */}
@@ -1146,7 +1145,7 @@ export default function POSPage() {
             </div>
 
             {/* List Isi Keranjang */}
-            <div className="overflow-y-auto flex-1 p-4 space-y-3">
+            <div className="overflow-y-auto flex-1 p-4 space-y-3 min-h-[40vh]">
               {cart.map((item, idx) => {
                 const addonsPrice = (item.selectedAddons || []).reduce((s, a) => s + a.price, 0);
                 const subtotal = (Number(item.price) + addonsPrice) * item.qty;
@@ -1169,8 +1168,8 @@ export default function POSPage() {
                       <button
                         onClick={() => {
                           updateCartQty(idx, -1);
-                          // Otomatis tutup keranjang kalau isinya habis
-                          if (cart.length === 1 && cart[0].qty === 1) {
+                          // Tutup otomatis kalau isi keranjang jadi 0 dari dalam pop-up
+                          if (isMobileCartOpen && cart.length === 1 && cart[0].qty === 1) {
                             setIsMobileCartOpen(false);
                           }
                         }}
