@@ -120,6 +120,9 @@ export default function POSPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
   
+  // State untuk Keranjang versi Mobile
+  const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
+
   // Cashier Session
   const [cashierSession, setCashierSession] = useState<CashierSession | null>(null);
   const [isCashierModalOpen, setIsCashierModalOpen] = useState(false);
@@ -127,6 +130,10 @@ export default function POSPage() {
   // Drawer Check
   const [isDrawerOpenModal, setIsDrawerOpenModal] = useState(false);
   const [hasCheckedDrawer, setHasCheckedDrawer] = useState(false);
+
+  // Addon selection modal when clicking a product
+  const [selectedProductForAddon, setSelectedProductForAddon] = useState<Product | null>(null);
+  const [tempSelectedAddons, setTempSelectedAddons] = useState<ProductAddon[]>([]);
 
   // Checkout modal & payment
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
@@ -815,14 +822,11 @@ export default function POSPage() {
       />
 
       {/* Floating Mobile Cart Bar (Khusus Layar HP) */}
-      {cart.length > 0 && (
+      {cart.length > 0 && !isMobileCartOpen && (
         <div className="fixed bottom-[72px] left-4 right-4 z-40 lg:hidden animate-pop-in">
-          {/* FUNGSI ONCLICK DIUBAH: LANGSUNG BUKA POP-UP CHECKOUT */}
+          {/* FUNGSI ONCLICK DIUBAH: MUNCULIN POP-UP KERANJANG TANPA SCROLL */}
           <button
-            onClick={() => {
-              setCashReceived(cartTotal);
-              setIsCheckoutOpen(true);
-            }}
+            onClick={() => setIsMobileCartOpen(true)}
             className="w-full bg-rose-600 text-white shadow-xl shadow-rose-300 rounded-2xl p-3.5 flex items-center justify-between active:scale-95 transition-transform border border-rose-400"
           >
             <div className="flex items-center gap-3">
@@ -838,7 +842,7 @@ export default function POSPage() {
               </div>
             </div>
             <div className="flex items-center gap-1 font-bold text-xs bg-white/20 px-3 py-1.5 rounded-xl">
-              <span>Bayar Langsung</span>
+              <span>Buka Keranjang</span>
               <ArrowRight className="w-4 h-4" />
             </div>
           </button>
@@ -1013,11 +1017,26 @@ export default function POSPage() {
           ) : null}
         </div>
 
-        {/* Cart Panel (Desktop Sticky & Mobile Floating Bar / Trigger) */}
-        <div id="cart-panel" className="lg:col-span-4 scroll-mt-20">
-          <div className="bg-white rounded-3xl p-4 sm:p-5 shadow-sm border border-pink-100 sticky top-20">
+        {/* Cart Panel (Desktop Sticky & Mobile Popup Modal) */}
+        <div 
+          id="cart-panel" 
+          className={`lg:col-span-4 ${
+            isMobileCartOpen 
+              ? "fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-gray-900/60 backdrop-blur-sm animate-pop-in p-0 sm:p-4" 
+              : "hidden lg:block"
+          }`}
+          onClick={(e) => {
+            // Close modal if user clicks outside the white cart box
+            if (e.target === e.currentTarget && isMobileCartOpen) setIsMobileCartOpen(false);
+          }}
+        >
+          <div className={`bg-white w-full flex flex-col shadow-2xl border border-pink-100 ${
+            isMobileCartOpen 
+              ? "rounded-t-3xl sm:rounded-3xl max-h-[85vh] p-5 pb-8 overflow-hidden animate-slide-up" 
+              : "rounded-3xl p-4 sm:p-5 sticky top-20"
+          }`}>
             {/* Header Keranjang */}
-            <div className="flex items-center justify-between pb-3 border-b border-pink-100 mb-3">
+            <div className="flex items-center justify-between pb-3 border-b border-pink-100 mb-3 shrink-0">
               <div className="flex items-center gap-2">
                 <div
                   className={`relative p-2 rounded-xl bg-rose-50 text-rose-500 transition-transform ${
@@ -1025,7 +1044,7 @@ export default function POSPage() {
                   }`}
                 >
                   <ShoppingBag className="w-5 h-5 stroke-[2.5]" />
-                  {cartItemCount > 0 && (
+                  {cartItemCount > 0 && !isMobileCartOpen && (
                     <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-rose-500 text-white font-extrabold text-[10px] rounded-full flex items-center justify-center shadow-sm animate-pop-in">
                       {cartItemCount}
                     </span>
@@ -1037,20 +1056,33 @@ export default function POSPage() {
                 </div>
               </div>
 
-              {cart.length > 0 && (
-                <button
-                  type="button"
-                  onClick={clearCart}
-                  className="text-gray-400 hover:text-red-500 p-1.5 rounded-xl hover:bg-red-50 transition-colors"
-                  title="Kosongkan Keranjang"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              )}
+              <div className="flex items-center gap-2">
+                {cart.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearCart();
+                      if (isMobileCartOpen) setIsMobileCartOpen(false);
+                    }}
+                    className="text-gray-400 hover:text-red-500 p-1.5 rounded-xl hover:bg-red-50 transition-colors"
+                    title="Kosongkan Keranjang"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+                {isMobileCartOpen && (
+                  <button 
+                    onClick={() => setIsMobileCartOpen(false)} 
+                    className="p-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-full transition-colors ml-1"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Cart Items List */}
-            <div className="space-y-2.5 max-h-[300px] sm:max-h-[360px] overflow-y-auto pr-1">
+            <div className={`space-y-2.5 overflow-y-auto pr-1 flex-1 ${isMobileCartOpen ? "min-h-[40vh]" : "max-h-[300px] sm:max-h-[360px]"}`}>
               {cart.map((item, idx) => {
                 const addonsPrice = (item.selectedAddons || []).reduce((s, a) => s + a.price, 0);
                 const subtotal = (Number(item.price) + addonsPrice) * item.qty;
@@ -1076,7 +1108,13 @@ export default function POSPage() {
                     <div className="flex items-center gap-2 bg-white px-2 py-1 rounded-xl border border-pink-200">
                       <button
                         type="button"
-                        onClick={() => updateCartQty(idx, -1)}
+                        onClick={() => {
+                          updateCartQty(idx, -1);
+                          // Tutup otomatis kalau isi keranjang jadi 0 dari dalam pop-up
+                          if (isMobileCartOpen && cart.length === 1 && cart[0].qty === 1) {
+                            setIsMobileCartOpen(false);
+                          }
+                        }}
                         className="w-6 h-6 rounded-lg bg-pink-50 hover:bg-pink-100 text-rose-600 flex items-center justify-center font-bold text-xs transition-colors"
                       >
                         <Minus className="w-3 h-3 stroke-[3]" />
@@ -1111,7 +1149,7 @@ export default function POSPage() {
 
             {/* Total & Checkout Button */}
             {cart.length > 0 && (
-              <div className="mt-4 pt-4 border-t border-pink-100">
+              <div className="mt-4 pt-4 border-t border-pink-100 shrink-0">
                 <div className="flex justify-between items-center mb-3">
                   <span className="text-xs font-bold text-gray-600">Total Tagihan:</span>
                   <span className="text-lg font-black text-rose-600">
@@ -1122,8 +1160,9 @@ export default function POSPage() {
                 <button
                   type="button"
                   onClick={() => {
+                    setIsMobileCartOpen(false); // Tutup pop-up keranjang
                     setCashReceived(cartTotal);
-                    setIsCheckoutOpen(true);
+                    setIsCheckoutOpen(true);    // Buka pop-up bayar
                   }}
                   className="w-full py-4 bg-gradient-to-r from-rose-500 to-pink-500 text-white font-black text-sm rounded-2xl shadow-lg shadow-rose-200 hover:opacity-95 active:scale-95 transition-all flex items-center justify-center gap-2 btn-bounce min-h-[52px]"
                 >
