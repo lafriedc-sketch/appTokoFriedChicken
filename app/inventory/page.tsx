@@ -47,8 +47,8 @@ export default function InventoryPage() {
   // Form Input Belanja Masuk
   const [purchaseForm, setPurchaseForm] = useState({
     item_id: "",
-    qty_pack: 0, // Kuantiti berdasarkan pack/kemasan belanjaan
-    qty_per_pack: 1, // Isi per pack (default 1)
+    qty_pack: 0,
+    qty_per_pack: 1,
     cost_total: 0,
     payment_source: "drawer" as "drawer" | "other",
   });
@@ -366,6 +366,41 @@ export default function InventoryPage() {
       fetchInventoryData();
     } catch (err: any) {
       alert(`Gagal menyimpan belanja: ${err.message || "Error"}`);
+    }
+  };
+
+  // Submit Stok Opname Tutup Kios (Fungsi yang terhapus sudah dikembalikan)
+  const handleOpnameSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (items.length === 0) return;
+
+    try {
+      for (const item of items) {
+        const physical = Number(opnameCounts[item.id] ?? item.current_stock);
+        const difference = physical - Number(item.current_stock);
+
+        if (difference !== 0) {
+          // Log opname adjustment
+          await supabase.from("inventory_logs").insert({
+            item_id: item.id,
+            change_qty: difference,
+            type: "opname",
+            cost_total: 0,
+            payment_source: "other",
+          });
+
+          // Update current stock to physical
+          await supabase
+            .from("inventory_items")
+            .update({ current_stock: physical })
+            .eq("id", item.id);
+        }
+      }
+
+      showToast("Hasil Stok Opname tutup kios berhasil diperbarui! ✨");
+      fetchInventoryData();
+    } catch (err: any) {
+      alert(`Gagal menyimpan opname: ${err.message || "Error"}`);
     }
   };
 
