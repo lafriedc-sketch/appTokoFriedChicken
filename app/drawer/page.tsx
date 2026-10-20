@@ -13,14 +13,19 @@ import {
   History,
   Sparkles,
   Flame,
-  Utensils
+  Utensils,
+  Edit3,
+  KeyRound,
+  X,
+  Check
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
-import { CashDrawer, Transaction, InventoryLog } from "@/types";
+import { CashDrawer, Transaction, InventoryLog, StoreSettings } from "@/types";
 import { formatRupiah, formatDateIndo } from "@/lib/utils";
 import InitialDrawerModal from "@/components/InitialDrawerModal";
 
 export default function DrawerPage() {
+  const [settings, setSettings] = useState<StoreSettings | null>(null);
   const [activeDrawer, setActiveDrawer] = useState<CashDrawer | null>(null);
   const [closedDrawers, setClosedDrawers] = useState<CashDrawer[]>([]);
   const [cashSalesTotal, setCashSalesTotal] = useState<number>(0);
@@ -29,6 +34,13 @@ export default function DrawerPage() {
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showOpenModal, setShowOpenModal] = useState(false);
+
+  // State Edit Modal Awal & PIN Admin
+  const [isPinModalOpen, setIsPinModalOpen] = useState(false);
+  const [pinInput, setPinInput] = useState("");
+  const [pinError, setPinError] = useState("");
+  const [isEditingCash, setIsEditingCash] = useState(false);
+  const [editCashAmount, setEditCashAmount] = useState<number>(0);
 
   // State Sisa Etalase / Waste Closing
   const [hasWaste, setHasWaste] = useState<boolean>(false);
@@ -39,6 +51,14 @@ export default function DrawerPage() {
   const fetchDrawerData = async () => {
     try {
       setLoading(true);
+
+      // 0. Get store settings for Admin PIN
+      const { data: settingsData } = await supabase
+        .from("store_settings")
+        .select("*")
+        .limit(1)
+        .maybeSingle();
+      if (settingsData) setSettings(settingsData);
 
       // 1. Get active drawer
       const { data: drawerData } = await supabase
@@ -111,6 +131,52 @@ export default function DrawerPage() {
   const difference = useMemo(() => {
     return actualCashInput - expectedCash;
   }, [actualCashInput, expectedCash]);
+
+  // Handle Verify PIN untuk Edit Modal Awal
+  const handleVerifyPin = () => {
+    const validPin = settings?.admin_pin || "1234";
+    if (pinInput === validPin) {
+      setIsPinModalOpen(false);
+      setPinInput("");
+      setPinError("");
+      setEditCashAmount(Number(activeDrawer?.initial_cash || 0));
+      setIsEditingCash(true);
+    } else {
+      setPinError("PIN Admin salah!");
+    }
+  };
+
+  // Handle Simpan Modal Awal yang baru
+  const handleSaveInitialCash = async () => {
+    if (!activeDrawer) return;
+    try {
+      setIsSubmitting(true);
+      
+      // Update DB
+      if (!activeDrawer.id.startsWith("local-")) {
+        const { error } = await supabase
+          .from("cash_drawers")
+          .update({ initial_cash: editCashAmount })
+          .eq("id", activeDrawer.id);
+        if (error) throw error;
+      }
+      
+      // Update Local State
+      const updatedDrawer = { ...activeDrawer, initial_cash: editCashAmount };
+      setActiveDrawer(updatedDrawer);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("la_active_drawer", JSON.stringify(updatedDrawer));
+      }
+      
+      setIsEditingCash(false);
+      alert("Modal kas awal laci berhasil diperbarui! 🌸");
+    } catch (error) {
+      console.error("Gagal mengubah modal kas:", error);
+      alert("Terjadi kesalahan sistem saat menyimpan data.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   // Helper potong stok gudang secara FIFO untuk sisa etalase closing
   const deductRawItemFifo = async (targetType: "ayam" | "usus", qtyToDeduct: number, noteText: string) => {
@@ -313,6 +379,47 @@ export default function DrawerPage() {
         }}
       />
 
+      {/* Modal PIN Admin untuk Edit Modal Kas */}
+      {isPinModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-pop-in">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-pink-100 text-center relative">
+            <button
+              onClick={() => { setIsPinModalOpen(false); setPinInput(""); setPinError(""); }}
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-700"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <div className="w-12 h-12 mx-auto rounded-2xl bg-rose-50 text-rose-500 flex items-center justify-center mb-3">
+              <KeyRound className="w-6 h-6" />
+            </div>
+            <h3 className="font-extrabold text-gray-800 mb-1">Otorisasi Admin</h3>
+            <p className="text-xs text-gray-500 mb-5">
+              Masukkan PIN Admin untuk mengubah nominal Modal Kas Awal.
+            </p>
+            
+            <input
+              type="password"
+              maxLength={6}
+              value={pinInput}
+              onChange={(e) => setPinInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleVerifyPin()}
+              placeholder="Ketik PIN..."
+              className="w-full text-center px-4 py-3 bg-pink-50/50 border border-pink-200 rounded-xl font-black tracking-widest focus:ring-2 focus:ring-rose-400 mb-3 text-lg"
+              autoFocus
+            />
+            
+            {pinError && <p className="text-[11px] font-bold text-red-500 mb-3">{pinError}</p>}
+            
+            <button
+              onClick={handleVerifyPin}
+              className="w-full py-3 bg-rose-500 text-white font-bold text-xs rounded-xl hover:bg-rose-600 shadow-md shadow-rose-200 btn-bounce"
+            >
+              Verifikasi & Edit
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="bg-white rounded-3xl p-5 shadow-sm border border-pink-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
@@ -361,14 +468,49 @@ export default function DrawerPage() {
 
             {/* Breakdown List */}
             <div className="space-y-3">
-              <div className="p-3 bg-pink-50/40 rounded-2xl border border-pink-100 flex justify-between items-center text-xs">
+              {/* Row: Modal Kas Awal Kembalian (Dengan Fitur Edit) */}
+              <div className="p-3 bg-pink-50/40 rounded-2xl border border-pink-100 flex justify-between items-center text-xs transition-all">
                 <div className="flex items-center gap-2 text-gray-700">
                   <Coins className="w-4 h-4 text-rose-500" />
-                  <span>Modal Kas Awal Kembalian (Terisolasi):</span>
+                  <span>Modal Kas Awal Kembalian:</span>
                 </div>
-                <span className="font-bold text-gray-900">
-                  {formatRupiah(activeDrawer.initial_cash)}
-                </span>
+                
+                {isEditingCash ? (
+                  <div className="flex items-center gap-2 animate-fade-in">
+                    <input
+                      type="number"
+                      value={editCashAmount || ""}
+                      onChange={(e) => setEditCashAmount(Number(e.target.value))}
+                      className="w-24 px-2 py-1.5 text-xs font-black text-right text-rose-600 bg-white border border-pink-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-400"
+                    />
+                    <button 
+                      onClick={handleSaveInitialCash}
+                      disabled={isSubmitting}
+                      className="p-1.5 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 shadow-sm"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                    </button>
+                    <button 
+                      onClick={() => setIsEditingCash(false)}
+                      className="p-1.5 bg-gray-200 text-gray-600 rounded-lg hover:bg-gray-300"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 group">
+                    <span className="font-bold text-gray-900">
+                      {formatRupiah(activeDrawer.initial_cash)}
+                    </span>
+                    <button 
+                      onClick={() => setIsPinModalOpen(true)}
+                      className="p-1.5 rounded-lg text-gray-400 bg-white border border-pink-100 opacity-50 group-hover:opacity-100 hover:text-rose-600 hover:bg-pink-50 transition-all"
+                      title="Edit Modal Kas"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="p-3 bg-emerald-50/50 rounded-2xl border border-emerald-100 flex justify-between items-center text-xs">
@@ -603,7 +745,7 @@ export default function DrawerPage() {
             onClick={() => setShowOpenModal(true)}
             className="w-full py-3.5 bg-rose-500 text-white font-bold text-xs rounded-2xl shadow-md shadow-rose-200 hover:bg-rose-600 btn-bounce"
           >
-            Buka Kas Laci Kasir (Rp200.000)
+            Buka Kas Laci Kasir
           </button>
         </div>
       )}
