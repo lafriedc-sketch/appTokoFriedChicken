@@ -369,7 +369,7 @@ export default function InventoryPage() {
     }
   };
 
-  // Submit Stok Opname Tutup Kios (Fungsi yang terhapus sudah dikembalikan)
+  // Submit Stok Opname Tutup Kios
   const handleOpnameSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (items.length === 0) return;
@@ -508,41 +508,41 @@ export default function InventoryPage() {
       )}
 
       {/* SUMMARY STATS PERSINGKATAN NILAI ASET STOK */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3">
         {/* Total Macam Bahan */}
-        <div className="bg-white rounded-3xl p-4 border border-pink-100 shadow-sm flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-pink-100 text-rose-600 flex items-center justify-center shrink-0">
-            <Package className="w-5 h-5" />
+        <div className="bg-white rounded-2xl sm:rounded-3xl p-3 sm:p-4 border border-pink-100 shadow-sm flex items-center gap-2 sm:gap-3 overflow-hidden">
+          <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-pink-100 text-rose-600 flex items-center justify-center shrink-0">
+            <Package className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
-          <div>
-            <span className="text-[10px] font-bold text-gray-400 block uppercase tracking-wider">Total Bahan Baku</span>
-            <span className="text-lg font-black text-gray-800">{items.length} Macam</span>
+          <div className="min-w-0">
+            <span className="text-[9px] sm:text-[10px] font-bold text-gray-400 block uppercase tracking-wider truncate">Total Bahan</span>
+            <span className="text-sm sm:text-lg font-black text-gray-800 truncate block">{items.length} Macam</span>
           </div>
         </div>
 
         {/* Total Nilai Aset Stok */}
-        <div className="bg-white rounded-3xl p-4 border border-pink-100 shadow-sm flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
-            <Coins className="w-5 h-5" />
+        <div className="bg-white rounded-2xl sm:rounded-3xl p-3 sm:p-4 border border-pink-100 shadow-sm flex items-center gap-2 sm:gap-3 overflow-hidden">
+          <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+            <Coins className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
-          <div>
-            <span className="text-[10px] font-bold text-gray-400 block uppercase tracking-wider">Total Nilai Persediaan</span>
-            <span className="text-lg font-black text-emerald-600">{formatRupiah(totalInventoryValue)}</span>
+          <div className="min-w-0">
+            <span className="text-[9px] sm:text-[10px] font-bold text-gray-400 block uppercase tracking-wider truncate">Nilai Persediaan</span>
+            <span className="text-sm sm:text-lg font-black text-emerald-600 truncate block">{formatRupiah(totalInventoryValue)}</span>
           </div>
         </div>
 
         {/* Status Stok Kios */}
-        <div className={`col-span-2 sm:col-span-1 bg-white rounded-3xl p-4 border shadow-sm flex items-center gap-3 ${
+        <div className={`col-span-2 sm:col-span-1 bg-white rounded-2xl sm:rounded-3xl p-3 sm:p-4 border shadow-sm flex items-center gap-2 sm:gap-3 overflow-hidden ${
           lowStockItems.length > 0 ? "border-amber-200 bg-amber-50/30" : "border-pink-100"
         }`}>
-          <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
+          <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl flex items-center justify-center shrink-0 ${
             lowStockItems.length > 0 ? "bg-amber-100 text-amber-600" : "bg-emerald-100 text-emerald-600"
           }`}>
-            {lowStockItems.length > 0 ? <AlertTriangle className="w-5 h-5 animate-pulse" /> : <CheckCircle2 className="w-5 h-5" />}
+            {lowStockItems.length > 0 ? <AlertTriangle className="w-4 h-4 sm:w-5 sm:h-5 animate-pulse" /> : <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" />}
           </div>
-          <div>
-            <span className="text-[10px] font-bold text-gray-400 block uppercase tracking-wider">Status Kebutuhan Stok</span>
-            <span className={`text-sm font-black ${lowStockItems.length > 0 ? "text-amber-700" : "text-emerald-600"}`}>
+          <div className="min-w-0">
+            <span className="text-[9px] sm:text-[10px] font-bold text-gray-400 block uppercase tracking-wider truncate">Status Kebutuhan</span>
+            <span className={`text-sm font-black truncate block ${lowStockItems.length > 0 ? "text-amber-700" : "text-emerald-600"}`}>
               {lowStockItems.length > 0 ? `${lowStockItems.length} Menipis (Restock Segera)` : "Semua Bahan Aman"}
             </span>
           </div>
@@ -569,7 +569,7 @@ export default function InventoryPage() {
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key as any)}
-              className={`px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-2xl text-[11px] sm:text-xs font-bold whitespace-nowrap transition-all btn-bounce flex items-center gap-1.5 ${
+              className={`flex items-center gap-1.5 px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-2xl text-[11px] sm:text-xs font-bold whitespace-nowrap transition-all btn-bounce ${
                 isActive
                   ? "bg-rose-500 text-white shadow-md shadow-rose-200"
                   : "bg-pink-50/80 text-gray-700 hover:bg-pink-100 border border-pink-100"
