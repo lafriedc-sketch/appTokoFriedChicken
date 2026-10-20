@@ -47,7 +47,8 @@ export default function InventoryPage() {
   // Form Input Belanja Masuk
   const [purchaseForm, setPurchaseForm] = useState({
     item_id: "",
-    qty: 0,
+    qty_pack: 0, // Kuantiti berdasarkan pack/kemasan belanjaan
+    qty_per_pack: 1, // Isi per pack (default 1)
     cost_total: 0,
     payment_source: "drawer" as "drawer" | "other",
   });
@@ -295,7 +296,7 @@ export default function InventoryPage() {
   // Submit Belanja Masuk
   const handlePurchaseSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!purchaseForm.item_id || purchaseForm.qty <= 0) {
+    if (!purchaseForm.item_id || purchaseForm.qty_pack <= 0 || purchaseForm.qty_per_pack <= 0) {
       alert("Pilih bahan dan masukkan jumlah belanja yang valid");
       return;
     }
@@ -304,15 +305,18 @@ export default function InventoryPage() {
       const selectedItem = items.find((it) => it.id === purchaseForm.item_id);
       if (!selectedItem) return;
 
-      const qtyNum = Number(purchaseForm.qty);
+      // Hitung total unit yang didapat: Jumlah Pack Beli * Isi per Pack
+      const totalUnitsGained = Number(purchaseForm.qty_pack) * Number(purchaseForm.qty_per_pack);
       const costTotalNum = Number(purchaseForm.cost_total);
-      const costPerUnit = qtyNum > 0 ? Math.round(costTotalNum / qtyNum) : 0;
+      
+      // HPP Satuan = Total Modal / Total Unit (otomatis dihitung sistem)
+      const costPerUnit = totalUnitsGained > 0 ? Math.round(costTotalNum / totalUnitsGained) : 0;
       const batchDate = new Date().toISOString();
 
       // 1. Insert Inventory Log
       const { error: logErr } = await supabase.from("inventory_logs").insert({
         item_id: purchaseForm.item_id,
-        change_qty: qtyNum,
+        change_qty: totalUnitsGained,
         type: "in",
         cost_total: costTotalNum,
         payment_source: purchaseForm.payment_source,
@@ -323,8 +327,8 @@ export default function InventoryPage() {
       // 2. Insert data baru ke tabel inventory_batches (FIFO)
       const { error: batchErr } = await supabase.from("inventory_batches").insert({
         inventory_item_id: purchaseForm.item_id,
-        initial_qty: qtyNum,
-        remaining_qty: qtyNum,
+        initial_qty: totalUnitsGained,
+        remaining_qty: totalUnitsGained,
         cost_per_unit: costPerUnit,
         batch_date: batchDate,
       });
@@ -343,7 +347,7 @@ export default function InventoryPage() {
       }
 
       // 3. Update Item Current Stock
-      const newStock = Number(selectedItem.current_stock) + qtyNum;
+      const newStock = Number(selectedItem.current_stock) + totalUnitsGained;
       const { error: updateErr } = await supabase
         .from("inventory_items")
         .update({ current_stock: newStock })
@@ -351,51 +355,17 @@ export default function InventoryPage() {
 
       if (updateErr) throw updateErr;
 
-      showToast(`Belanja ${selectedItem.name} berhasil dicatat & batch FIFO dibuat! (+${qtyNum} ${selectedItem.unit} @ ${formatRupiah(costPerUnit)}) 🌸`);
+      showToast(`Belanja ${selectedItem.name} berhasil! Masuk +${totalUnitsGained} ${selectedItem.unit} dengan HPP ${formatRupiah(costPerUnit)}/${selectedItem.unit} 🌸`);
       setPurchaseForm({
         item_id: items[0]?.id || "",
-        qty: 0,
+        qty_pack: 0,
+        qty_per_pack: 1,
         cost_total: 0,
         payment_source: "drawer",
       });
       fetchInventoryData();
     } catch (err: any) {
       alert(`Gagal menyimpan belanja: ${err.message || "Error"}`);
-    }
-  };
-
-  // Submit Stok Opname Tutup Kios
-  const handleOpnameSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (items.length === 0) return;
-
-    try {
-      for (const item of items) {
-        const physical = Number(opnameCounts[item.id] ?? item.current_stock);
-        const difference = physical - Number(item.current_stock);
-
-        if (difference !== 0) {
-          // Log opname adjustment
-          await supabase.from("inventory_logs").insert({
-            item_id: item.id,
-            change_qty: difference,
-            type: "opname",
-            cost_total: 0,
-            payment_source: "other",
-          });
-
-          // Update current stock to physical
-          await supabase
-            .from("inventory_items")
-            .update({ current_stock: physical })
-            .eq("id", item.id);
-        }
-      }
-
-      showToast("Hasil Stok Opname tutup kios berhasil diperbarui! ✨");
-      fetchInventoryData();
-    } catch (err: any) {
-      alert(`Gagal menyimpan opname: ${err.message || "Error"}`);
     }
   };
 
@@ -409,31 +379,32 @@ export default function InventoryPage() {
         </div>
       )}
 
-      {/* Header */}
-      <div className="bg-white rounded-3xl p-5 shadow-sm border border-pink-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-black text-gray-800">
-              Inventaris Bahan & Stok Opname
-            </h1>
-            <span className="text-lg">📦🌸</span>
+      {/* Header Info - Dirapikan untuk Mobile */}
+      <div className="bg-white rounded-3xl p-4 sm:p-5 shadow-sm border border-pink-100 mb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 mb-1.5">
+              <h1 className="text-lg sm:text-xl font-black text-gray-800 leading-tight">
+                Inventaris & Stok 📦
+              </h1>
+            </div>
+            <p className="text-[11px] sm:text-xs text-gray-500 leading-relaxed pr-2">
+              Pantau sisa bahan, nilai aset persediaan, dan catat belanja harian kios.
+            </p>
           </div>
-          <p className="text-xs text-gray-500">
-            Pantau stok bahan, modal harga beli (HPP), nilai persediaan, belanja harian, dan opname tutup kios.
-          </p>
-        </div>
 
-        {/* Action Button: WhatsApp Restock Alert */}
-        {lowStockItems.length > 0 && (
-          <button
-            type="button"
-            onClick={handleShareWhatsAppRestock}
-            className="self-start sm:self-center px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-2xl shadow-md shadow-emerald-200 flex items-center gap-2 transition-all btn-bounce"
-          >
-            <span>📱</span>
-            <span>Kirim WA Restock ({lowStockItems.length} Menipis)</span>
-          </button>
-        )}
+          {/* Action Button: WhatsApp Restock Alert */}
+          {lowStockItems.length > 0 && (
+            <button
+              type="button"
+              onClick={handleShareWhatsAppRestock}
+              className="self-start sm:self-center px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-2xl shadow-md shadow-emerald-200 flex items-center gap-2 transition-all btn-bounce"
+            >
+              <span>📱</span>
+              <span>WA Restock ({lowStockItems.length} Kritis)</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ALERT NOTIFIKASI STOK MENIPIS / MINIMUM */}
@@ -563,13 +534,13 @@ export default function InventoryPage() {
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key as any)}
-              className={`flex items-center gap-1.5 px-4 py-2.5 rounded-2xl text-xs font-bold whitespace-nowrap transition-all btn-bounce ${
+              className={`px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-2xl text-[11px] sm:text-xs font-bold whitespace-nowrap transition-all btn-bounce flex items-center gap-1.5 ${
                 isActive
                   ? "bg-rose-500 text-white shadow-md shadow-rose-200"
-                  : "bg-white text-gray-700 border border-pink-100 hover:bg-pink-50/50"
+                  : "bg-pink-50/80 text-gray-700 hover:bg-pink-100 border border-pink-100"
               }`}
             >
-              <Icon className="w-4 h-4" />
+              <Icon className="w-4 sm:w-4 h-4 sm:h-4" />
               <span>{tab.label}</span>
               {tab.badge && (
                 <span className="ml-1 text-[10px] font-black bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full">
@@ -685,7 +656,7 @@ export default function InventoryPage() {
         </div>
       )}
 
-      {/* TAB 2: CATAT BELANJA MASUK */}
+      {/* TAB 2: CATAT BELANJA MASUK (DIUPGRADE DENGAN PERHITUNGAN MULTIPLIER KEMASAN) */}
       {activeTab === "purchase" && (
         <div className="bg-white rounded-3xl p-6 shadow-sm border border-pink-100 max-w-xl">
           <h2 className="text-base font-extrabold text-gray-800 mb-1 flex items-center gap-2">
@@ -693,7 +664,7 @@ export default function InventoryPage() {
             <span>Form Pencatatan Belanja Stok Bahan</span>
           </h2>
           <p className="text-xs text-gray-500 mb-5">
-            Setiap belanja bahan baku akan menambah kuantiti stok, menghitung harga modal satuan otomatis, dan jika dibayar dari laci kasir, saldo laci akan otomatis terpotong saat rekonsiliasi.
+            Otomatis menghitung HPP (Harga Pokok Penjualan) bahan sampai ke satuan terkecil. Jika beli per pack, sistem yang akan mecah isinya dan menghitung modal satuannya buat lu.
           </p>
 
           <form onSubmit={handlePurchaseSubmit} className="space-y-4">
@@ -709,61 +680,104 @@ export default function InventoryPage() {
               >
                 {items.map((it) => (
                   <option key={it.id} value={it.id}>
-                    {it.name} (Sisa: {it.current_stock} {it.unit} &bull; Min: {it.min_stock})
+                    {it.name} (Stok di Gudang: {it.current_stock} {it.unit})
                   </option>
                 ))}
               </select>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
+              {/* Jumlah Belanja Berapa Bungkus/Pack */}
               <div>
                 <label className="block text-xs font-bold text-gray-700 mb-1.5">
-                  Jumlah Kuantiti Masuk
+                  Berapa Pack/Bungkus?
                 </label>
-                <input
-                  type="number"
-                  min="0.1"
-                  step="any"
-                  value={purchaseForm.qty || ""}
-                  onChange={(e) => setPurchaseForm({ ...purchaseForm, qty: Number(e.target.value) || 0 })}
-                  className="w-full px-4 py-3 text-sm font-black bg-pink-50/50 border border-pink-200 rounded-2xl focus:ring-2 focus:ring-rose-400 text-right"
-                  placeholder="0"
-                  required
-                />
+                <div className="flex items-center bg-pink-50/50 border border-pink-200 rounded-2xl focus-within:ring-2 focus-within:ring-rose-400 overflow-hidden">
+                  <input
+                    type="number"
+                    min="0.1"
+                    step="any"
+                    value={purchaseForm.qty_pack || ""}
+                    onChange={(e) => setPurchaseForm({ ...purchaseForm, qty_pack: Number(e.target.value) || 0 })}
+                    className="w-full px-4 py-3 text-sm font-black bg-transparent text-right outline-none"
+                    placeholder="Contoh: 15"
+                    required
+                  />
+                  <span className="px-3 py-3 text-xs font-bold text-gray-500 bg-pink-100/50 border-l border-pink-200">
+                    Bks
+                  </span>
+                </div>
               </div>
 
+              {/* Isi Dalam 1 Bungkus/Pack */}
               <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1.5">
-                  Total Biaya Belanja (Rp)
+                <label className="block text-xs font-bold text-gray-700 mb-1.5 text-rose-600">
+                  Isi per 1 Bungkus?
                 </label>
-                <input
-                  type="number"
-                  value={purchaseForm.cost_total || ""}
-                  onChange={(e) => setPurchaseForm({ ...purchaseForm, cost_total: Number(e.target.value) || 0 })}
-                  className="w-full px-4 py-3 text-sm font-black text-rose-600 bg-pink-50/50 border border-pink-200 rounded-2xl focus:ring-2 focus:ring-rose-400 text-right"
-                  placeholder="0"
-                  required
-                />
-                <span className="text-[10px] text-gray-500 block text-right mt-1">
-                  {formatRupiah(purchaseForm.cost_total)}
-                </span>
+                <div className="flex items-center bg-pink-50/50 border border-pink-200 rounded-2xl focus-within:ring-2 focus-within:ring-rose-400 overflow-hidden">
+                  <span className="px-3 py-3 text-xs font-bold text-gray-500 bg-pink-100/50 border-r border-pink-200">
+                    Isi
+                  </span>
+                  <input
+                    type="number"
+                    min="1"
+                    step="any"
+                    value={purchaseForm.qty_per_pack || ""}
+                    onChange={(e) => setPurchaseForm({ ...purchaseForm, qty_per_pack: Number(e.target.value) || 1 })}
+                    className="w-full px-4 py-3 text-sm font-black bg-transparent text-right outline-none text-rose-600"
+                    placeholder="Contoh: 100"
+                    required
+                  />
+                  <span className="px-3 py-3 text-[11px] font-bold text-gray-500 bg-pink-100/50 border-l border-pink-200 truncate max-w-[60px]">
+                    {items.find((i) => i.id === purchaseForm.item_id)?.unit || "pcs"}
+                  </span>
+                </div>
               </div>
             </div>
 
-            {/* LIVE PREVIEW HARGA MODAL SATUAN */}
-            {purchaseForm.qty > 0 && purchaseForm.cost_total > 0 && (
-              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 flex items-center justify-between text-xs animate-pop-in">
-                <span className="font-bold text-emerald-800 flex items-center gap-1.5">
+            {/* Total Biaya Belanja Keseluruhan */}
+            <div>
+              <label className="block text-xs font-bold text-gray-700 mb-1.5">
+                Total Biaya Belanja (Rp)
+              </label>
+              <input
+                type="number"
+                value={purchaseForm.cost_total || ""}
+                onChange={(e) => setPurchaseForm({ ...purchaseForm, cost_total: Number(e.target.value) || 0 })}
+                className="w-full px-4 py-3 text-sm font-black text-rose-600 bg-pink-50/50 border border-pink-200 rounded-2xl focus:ring-2 focus:ring-rose-400 text-right"
+                placeholder="Contoh: 225000"
+                required
+              />
+              <span className="text-[10px] text-gray-500 block text-right mt-1">
+                {formatRupiah(purchaseForm.cost_total)}
+              </span>
+            </div>
+
+            {/* LIVE PREVIEW HASIL KALKULASI OTOMATIS */}
+            {purchaseForm.qty_pack > 0 && purchaseForm.qty_per_pack > 0 && purchaseForm.cost_total > 0 && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex flex-col gap-2 animate-pop-in">
+                <span className="font-extrabold text-emerald-800 flex items-center gap-1.5 text-xs mb-1">
                   <TrendingUp className="w-4 h-4 text-emerald-600" />
-                  <span>Estimasi Harga Modal Beli per Satuan:</span>
+                  <span>Kalkulasi Otomatis Sistem:</span>
                 </span>
-                <span className="font-black text-emerald-700 text-sm">
-                  {formatRupiah(Math.round(purchaseForm.cost_total / purchaseForm.qty))} / {items.find((i) => i.id === purchaseForm.item_id)?.unit || "unit"}
-                </span>
+                
+                <div className="flex justify-between items-center text-xs border-b border-emerald-100 pb-2">
+                  <span className="text-emerald-700">Total Stok Masuk Gudang:</span>
+                  <span className="font-black text-emerald-800 text-sm">
+                    {Number(purchaseForm.qty_pack) * Number(purchaseForm.qty_per_pack)} {items.find((i) => i.id === purchaseForm.item_id)?.unit || "unit"}
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center text-xs pt-1">
+                  <span className="text-emerald-700">Modal Satuan (HPP Terkecil):</span>
+                  <span className="font-black text-rose-600 text-sm">
+                    {formatRupiah(Math.round(purchaseForm.cost_total / (Number(purchaseForm.qty_pack) * Number(purchaseForm.qty_per_pack))))} <span className="text-[10px] text-emerald-700 font-bold">/ {items.find((i) => i.id === purchaseForm.item_id)?.unit || "unit"}</span>
+                  </span>
+                </div>
               </div>
             )}
 
-            <div>
+            <div className="pt-2">
               <label className="block text-xs font-bold text-gray-700 mb-1.5">
                 Sumber Dana Pembayaran
               </label>
@@ -802,7 +816,7 @@ export default function InventoryPage() {
 
             <button
               type="submit"
-              className="w-full py-4 bg-rose-500 text-white font-bold text-xs rounded-2xl shadow-md shadow-rose-200 hover:bg-rose-600 active:scale-95 transition-all flex items-center justify-center gap-2 btn-bounce min-h-[48px]"
+              className="w-full py-4 bg-rose-500 text-white font-bold text-xs rounded-2xl shadow-md shadow-rose-200 hover:bg-rose-600 active:scale-95 transition-all flex items-center justify-center gap-2 btn-bounce min-h-[48px] mt-2"
             >
               <CheckCircle2 className="w-4 h-4" />
               <span>Simpan Catatan Belanja</span>
