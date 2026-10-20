@@ -120,8 +120,11 @@ export default function POSPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
   
-  // State untuk Keranjang versi Mobile
+  // State untuk Pop-up Keranjang versi Mobile
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
+
+  // State untuk Animasi Flying +1
+  const [clickEffects, setClickEffects] = useState<{ id: number; x: number; y: number }[]>([]);
 
   // Cashier Session
   const [cashierSession, setCashierSession] = useState<CashierSession | null>(null);
@@ -151,7 +154,6 @@ export default function POSPage() {
   // Fetch initial data secara PARALEL untuk kecepatan maksimal (< 800ms vs 5000ms)
   const fetchData = async () => {
     try {
-      // 0. Check Cashier Session
       if (typeof window !== "undefined") {
         const storedCashier = localStorage.getItem("la_active_cashier");
         if (storedCashier) {
@@ -165,7 +167,6 @@ export default function POSPage() {
         }
       }
 
-      // 1. Eksekusi semua query secara PARALEL (Promise.all)
       const [drawerRes, productsRes, addonsRes, settingsRes] = await Promise.all([
         supabase
           .from("cash_drawers")
@@ -189,14 +190,12 @@ export default function POSPage() {
           .maybeSingle(),
       ]);
 
-      // Check Drawer
       const localDrawer = typeof window !== "undefined" ? localStorage.getItem("la_active_drawer") : null;
       if (!drawerRes.data && !localDrawer) {
         setIsDrawerOpenModal(true);
       }
       setHasCheckedDrawer(true);
 
-      // Handle Products
       if (!productsRes.error && productsRes.data && productsRes.data.length > 0) {
         let merged = productsRes.data;
         if (typeof window !== "undefined") {
@@ -225,7 +224,6 @@ export default function POSPage() {
         }
       }
 
-      // Handle Addons
       if (!addonsRes.error && addonsRes.data && addonsRes.data.length > 0) {
         setAddons(addonsRes.data);
         globalCachedAddons = addonsRes.data;
@@ -236,7 +234,6 @@ export default function POSPage() {
         }
       }
 
-      // Handle Settings
       if (settingsRes.data) {
         setSettings(settingsRes.data);
         globalCachedSettings = settingsRes.data;
@@ -252,14 +249,12 @@ export default function POSPage() {
     fetchData();
   }, []);
 
-  // Filter Categories: Urutkan agar 'Promo' selalu berada persis disamping 'Paket'
   const categories = useMemo(() => {
     const desiredOrder = ["Ayam", "Paket", "Promo", "Makanan", "Minuman"];
     const existingCats = Array.from(new Set(products.map((p) => p.category)));
 
     const result: string[] = [];
     desiredOrder.forEach((c) => {
-      // Selalu sertakan Paket & Promo atau kategori yang memiliki produk
       if (existingCats.includes(c) || c === "Paket" || c === "Promo") {
         result.push(c);
       }
@@ -282,7 +277,6 @@ export default function POSPage() {
     });
   }, [products, activeCategory, searchQuery]);
 
-  // Cart Calculations
   const cartItemCount = useMemo(() => {
     return cart.reduce((acc, item) => acc + item.qty, 0);
   }, [cart]);
@@ -294,15 +288,25 @@ export default function POSPage() {
     }, 0);
   }, [cart]);
 
-  // Handle Add Product Click (VERSI CEPAT - TANPA POPUP SAUS)
-  const handleProductClick = (product: Product) => {
+  // Handle Add Product Click DENGAN ANIMASI FLYING +1
+  const handleProductClick = (e: React.MouseEvent<HTMLDivElement>, product: Product) => {
     if (!product.is_available) return;
-    // Langsung masuk keranjang tanpa memunculkan modal
+
+    // Hitung posisi klik untuk memunculkan efek +1 terbang
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const newEffect = { id: Date.now(), x, y };
+    
+    setClickEffects(prev => [...prev, newEffect]);
+    setTimeout(() => {
+      setClickEffects(prev => prev.filter(c => c.id !== newEffect.id));
+    }, 700);
+
     addToCartDirect(product, []);
   };
 
   const addToCartDirect = (product: Product, selectedAddonsList: ProductAddon[]) => {
-    // Check if same product with same addons already in cart
     const addonIds = selectedAddonsList.map((a) => a.id).sort().join(",");
     
     setCart((prev) => {
@@ -329,7 +333,6 @@ export default function POSPage() {
       }
     });
 
-    // Trigger cart badge bounce
     setCartBadgeAnimate(true);
     setTimeout(() => setCartBadgeAnimate(false), 300);
   };
@@ -351,7 +354,6 @@ export default function POSPage() {
     setCart([]);
   };
 
-  // Cash Quick Presets
   const cashPresets = [
     { label: "Uang Pas", val: cartTotal },
     { label: "10.000", val: 10000 },
@@ -360,11 +362,9 @@ export default function POSPage() {
     { label: "100.000", val: 100000 },
   ];
 
-  // Kembalian logic
   const cashDifference = cashReceived - cartTotal;
   const isUnderpaid = paymentMethod === "cash" && cashReceived < cartTotal;
 
-  // Process Checkout
   const handleCheckout = async () => {
     if (cart.length === 0) return;
     if (paymentMethod === "cash" && isUnderpaid) return;
@@ -387,7 +387,6 @@ export default function POSPage() {
       };
     });
 
-    // Simpan riwayat transaksi kasir ke local memory untuk audit trail offline/online
     const saveCashierHistory = (tx: Transaction) => {
       try {
         const cName = tx.cashier_name || cashierSession?.name || "Kasir";
@@ -424,26 +423,18 @@ export default function POSPage() {
 
     const currentCashierName = cashierSession?.name || "Kasir";
 
-    // PROSES BACKGROUND ASYNCHRONOUS UNTUK MEMOTONG STOK (FIFO) BERDASARKAN RESEP
     const processFifoStockDeduction = async (cartItems: CartItem[]) => {
       try {
         for (const item of cartItems) {
           if (!item.productId || item.qty <= 0) continue;
 
-          // Map untuk agregasi total kebutuhan bahan baku dan kemasan (rawItemId -> totalNeededQty)
           const requiredMaterialsMap = new Map<string, number>();
 
-          // 1. Ambil data kebutuhan bahan dari product_recipes berdasarkan productId
           let { data: productRecs, error: recErr } = await supabase
             .from("product_recipes")
             .select("*")
             .eq("product_id", item.productId);
 
-          if (recErr) {
-            console.error(`Gagal mengambil resep untuk productId ${item.productId}:`, recErr);
-          }
-
-          // Cek jika produk merupakan promo / paket dengan promo_items
           if (!productRecs || productRecs.length === 0) {
             const matchedProd = products.find((p) => p.id === item.productId);
             if (matchedProd?.promo_items && matchedProd.promo_items.length > 0) {
@@ -478,22 +469,18 @@ export default function POSPage() {
             }
           }
 
-          // 1b. Iterasi pada item.selectedAddons (jika ada) dan ambil resep dari addon_recipes
           if (item.selectedAddons && item.selectedAddons.length > 0) {
             for (const addon of item.selectedAddons) {
               if (!addon.id) continue;
               try {
-                const { data: addonRecs, error: addonRecErr } = await supabase
+                const { data: addonRecs } = await supabase
                   .from("addon_recipes")
                   .select("*")
                   .eq("addon_id", addon.id);
 
-                if (addonRecErr) {
-                  console.error(`Gagal mengambil resep untuk addonId ${addon.id}:`, addonRecErr);
-                } else if (addonRecs && addonRecs.length > 0) {
+                if (addonRecs && addonRecs.length > 0) {
                   for (const ar of addonRecs) {
                     if (!ar.inventory_item_id) continue;
-                    // Kebutuhan bahan baku / kemasan addon dikalikan dengan qty cart item
                     const addonNeed = Number(ar.qty_required || 1) * Number(item.qty);
                     requiredMaterialsMap.set(
                       ar.inventory_item_id,
@@ -507,35 +494,24 @@ export default function POSPage() {
             }
           }
 
-          // Jika tidak ada bahan yang perlu dipotong untuk menu & addon ini, lewati
-          if (requiredMaterialsMap.size === 0) {
-            continue;
-          }
+          if (requiredMaterialsMap.size === 0) continue;
 
-          // Looping setiap bahan dalam resep yang telah diagregasikan
           for (const [rawItemId, totalNeededQty] of Array.from(requiredMaterialsMap.entries())) {
             if (!rawItemId || totalNeededQty <= 0) continue;
             let remainingToDeduct = totalNeededQty;
             let totalHpp = 0;
             let totalDeductedFromBatches = 0;
 
-            // 2. Cari stok bahan di inventory_batches (filter remaining_qty > 0, urutkan batch_date ASCENDING)
-            const { data: batches, error: batchErr } = await supabase
+            const { data: batches } = await supabase
               .from("inventory_batches")
               .select("*")
               .eq("inventory_item_id", rawItemId)
               .gt("remaining_qty", 0)
               .order("batch_date", { ascending: true });
 
-            if (batchErr) {
-              console.error(`Gagal mengambil inventory_batches untuk ${rawItemId}:`, batchErr);
-            }
-
-            // 3. Lakukan looping FIFO: potong remaining_qty dari batch tertua
             if (batches && batches.length > 0) {
               for (const batch of batches) {
                 if (remainingToDeduct <= 0) break;
-
                 const batchRemaining = Number(batch.remaining_qty || 0);
                 if (batchRemaining <= 0) continue;
 
@@ -549,23 +525,14 @@ export default function POSPage() {
 
                 const newRemaining = Math.max(0, batchRemaining - deductQty);
 
-                // Update ke tabel inventory_batches
-                const { error: updBatchErr } = await supabase
+                await supabase
                   .from("inventory_batches")
                   .update({ remaining_qty: newRemaining })
                   .eq("id", batch.id);
-
-                if (updBatchErr) {
-                  console.error(`Gagal update batch ${batch.id}:`, updBatchErr);
-                }
               }
             }
 
-            // 4. Krusial untuk Laba Bersih: Hitung total HPP (modal asli) dari batch yang terpotong.
-            // Insert catatan ke inventory_logs dengan data: type: "out", payment_source: "system_fifo",
-            // dan masukkan total HPP tersebut ke kolom cost_total.
             const qtyDeducted = totalDeductedFromBatches > 0 ? totalDeductedFromBatches : totalNeededQty;
-
             const logPayload = {
               item_id: rawItemId,
               change_qty: -qtyDeducted,
@@ -582,25 +549,18 @@ export default function POSPage() {
               .maybeSingle();
 
             if (logErr) {
-              // Jika constraint database belum diperbarui, fallback ke payment_source 'other'
               if (logErr.code === "23514" || logErr.message?.includes("payment_source")) {
                 const { data: retryLog } = await supabase
                   .from("inventory_logs")
-                  .insert({
-                    ...logPayload,
-                    payment_source: "other",
-                  })
+                  .insert({ ...logPayload, payment_source: "other" })
                   .select()
                   .maybeSingle();
                 insertedRow = retryLog;
-              } else {
-                console.error("Gagal insert log FIFO:", logErr);
               }
             } else {
               insertedRow = logRes;
             }
 
-            // Simpan ke local audit trail untuk offline/fallback laporan
             if (typeof window !== "undefined") {
               try {
                 const localFifoLogs = JSON.parse(localStorage.getItem("la_fifo_logs") || "[]");
@@ -619,7 +579,6 @@ export default function POSPage() {
               } catch {}
             }
 
-            // 5. Update current_stock di tabel inventory_items
             const { data: curItem } = await supabase
               .from("inventory_items")
               .select("current_stock")
@@ -628,14 +587,10 @@ export default function POSPage() {
 
             if (curItem) {
               const updatedStock = Math.max(0, Number(curItem.current_stock || 0) - totalNeededQty);
-              const { error: updItemErr } = await supabase
+              await supabase
                 .from("inventory_items")
                 .update({ current_stock: updatedStock })
                 .eq("id", rawItemId);
-
-              if (updItemErr) {
-                console.error(`Gagal update current_stock ${rawItemId}:`, updItemErr);
-              }
             }
           }
         }
@@ -645,7 +600,6 @@ export default function POSPage() {
     };
 
     try {
-      // 1. Insert Transaction (Mencoba dengan kolom cashier_name)
       let transData: any = null;
       const { data: tData, error: transErr } = await supabase
         .from("transactions")
@@ -662,7 +616,6 @@ export default function POSPage() {
         .single();
 
       if (transErr) {
-        // Jika kolom cashier_name belum ada di schema Supabase, fallback insert tanpa kolom tersebut
         if (transErr.message?.includes("cashier_name") || transErr.code === "PGRST204") {
           const { data: retryData, error: retryErr } = await supabase
             .from("transactions")
@@ -702,7 +655,6 @@ export default function POSPage() {
           }
           transData = retryData;
         } else if (transErr.code === "PGRST205" || transErr.message?.includes("schema cache")) {
-          // Graceful demo transaction
           const demoTx: Transaction = {
             id: "demo-tx-" + Date.now(),
             receipt_no: receiptNo,
@@ -728,19 +680,13 @@ export default function POSPage() {
         transData = tData;
       }
 
-      // 2. Insert Transaction Items
       const itemsPayloadWithId = transactionItemsPayload.map((it) => ({
         ...it,
         transaction_id: transData.id,
       }));
 
-      const { error: itemsErr } = await supabase
-        .from("transaction_items")
-        .insert(itemsPayloadWithId);
+      await supabase.from("transaction_items").insert(itemsPayloadWithId);
 
-      if (itemsErr) console.error("Error inserting items:", itemsErr);
-
-      // PROSES BACKGROUND ASYNCHRONOUS: MEMOTONG STOK (FIFO) BERDASARKAN RESEP
       const cartSnapshot = [...cart];
       processFifoStockDeduction(cartSnapshot).catch((err) => {
         console.error("Asynchronous FIFO process error:", err);
@@ -759,7 +705,6 @@ export default function POSPage() {
       setShowCelebration(true);
     } catch (err: any) {
       console.error("Gagal memproses transaksi:", err);
-      // Fallback in case of network issue
       const demoTx: Transaction = {
         id: "demo-tx-" + Date.now(),
         receipt_no: receiptNo,
@@ -783,7 +728,30 @@ export default function POSPage() {
   };
 
   return (
-    <div className="pb-28 lg:pb-8"> {/* Memberi ruang kosong di bawah layar HP agar tombol melayang tidak tertutup */}
+    <div className="pb-28 lg:pb-8">
+      {/* GLOBAL STYLES UNTUK ANIMASI +1 */}
+      <style dangerouslySetInnerHTML={{__html: `
+        @keyframes flyUpFade {
+          0% { transform: translate(-50%, -50%) scale(0.5); opacity: 1; }
+          50% { transform: translate(-50%, -80px) scale(1.5); opacity: 1; }
+          100% { transform: translate(-50%, -120px) scale(1); opacity: 0; }
+        }
+        .animate-fly-up {
+          animation: flyUpFade 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        }
+      `}} />
+
+      {/* RENDER ANIMASI +1 TERBANG */}
+      {clickEffects.map(effect => (
+        <div
+          key={effect.id}
+          className="fixed z-[100] text-rose-500 font-black text-2xl drop-shadow-md pointer-events-none animate-fly-up"
+          style={{ left: effect.x, top: effect.y }}
+        >
+          +1
+        </div>
+      ))}
+
       {/* Cashier Login Modal */}
       <CashierLoginModal
         isOpen={isCashierModalOpen}
@@ -822,9 +790,9 @@ export default function POSPage() {
       />
 
       {/* Floating Mobile Cart Bar (Khusus Layar HP) */}
-      {cart.length > 0 && !isMobileCartOpen && (
+      {cart.length > 0 && !isMobileCartOpen && !isCheckoutOpen && (
         <div className="fixed bottom-[72px] left-4 right-4 z-40 lg:hidden animate-pop-in">
-          {/* FUNGSI ONCLICK DIUBAH: MUNCULIN POP-UP KERANJANG TANPA SCROLL */}
+          {/* FUNGSI ONCLICK DIUBAH: LANGSUNG BUKA POP-UP KERANJANG, NO SCROLL */}
           <button
             onClick={() => setIsMobileCartOpen(true)}
             className="w-full bg-rose-600 text-white shadow-xl shadow-rose-300 rounded-2xl p-3.5 flex items-center justify-between active:scale-95 transition-transform border border-rose-400"
@@ -921,7 +889,7 @@ export default function POSPage() {
             {filteredProducts.map((p) => (
               <div
                 key={p.id}
-                onClick={() => handleProductClick(p)}
+                onClick={(e) => handleProductClick(e, p)}
                 className={`bg-white rounded-3xl p-3.5 sm:p-4 border shadow-sm transition-all text-left flex flex-col justify-between select-none relative overflow-hidden ${
                   p.is_available
                     ? "cursor-pointer hover:shadow-md hover:border-pink-300 active:scale-95 btn-bounce border-pink-100"
@@ -1017,26 +985,12 @@ export default function POSPage() {
           ) : null}
         </div>
 
-        {/* Cart Panel (Desktop Sticky & Mobile Popup Modal) */}
-        <div 
-          id="cart-panel" 
-          className={`lg:col-span-4 ${
-            isMobileCartOpen 
-              ? "fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-gray-900/60 backdrop-blur-sm animate-pop-in p-0 sm:p-4" 
-              : "hidden lg:block"
-          }`}
-          onClick={(e) => {
-            // Close modal if user clicks outside the white cart box
-            if (e.target === e.currentTarget && isMobileCartOpen) setIsMobileCartOpen(false);
-          }}
-        >
-          <div className={`bg-white w-full flex flex-col shadow-2xl border border-pink-100 ${
-            isMobileCartOpen 
-              ? "rounded-t-3xl sm:rounded-3xl max-h-[85vh] p-5 pb-8 overflow-hidden animate-slide-up" 
-              : "rounded-3xl p-4 sm:p-5 sticky top-20"
-          }`}>
-            {/* Header Keranjang */}
-            <div className="flex items-center justify-between pb-3 border-b border-pink-100 mb-3 shrink-0">
+        {/* KERANJANG KASIR (VERSI DESKTOP) */}
+        {/* Disembunyikan di layar HP via class "hidden lg:block" */}
+        <div className="hidden lg:block lg:col-span-4 sticky top-20">
+          <div className="bg-white rounded-3xl p-5 shadow-sm border border-pink-100">
+            {/* Header Keranjang Desktop */}
+            <div className="flex items-center justify-between pb-3 border-b border-pink-100 mb-3">
               <div className="flex items-center gap-2">
                 <div
                   className={`relative p-2 rounded-xl bg-rose-50 text-rose-500 transition-transform ${
@@ -1044,7 +998,7 @@ export default function POSPage() {
                   }`}
                 >
                   <ShoppingBag className="w-5 h-5 stroke-[2.5]" />
-                  {cartItemCount > 0 && !isMobileCartOpen && (
+                  {cartItemCount > 0 && (
                     <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-rose-500 text-white font-extrabold text-[10px] rounded-full flex items-center justify-center shadow-sm animate-pop-in">
                       {cartItemCount}
                     </span>
@@ -1056,33 +1010,20 @@ export default function POSPage() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
-                {cart.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      clearCart();
-                      if (isMobileCartOpen) setIsMobileCartOpen(false);
-                    }}
-                    className="text-gray-400 hover:text-red-500 p-1.5 rounded-xl hover:bg-red-50 transition-colors"
-                    title="Kosongkan Keranjang"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                )}
-                {isMobileCartOpen && (
-                  <button 
-                    onClick={() => setIsMobileCartOpen(false)} 
-                    className="p-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-full transition-colors ml-1"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
+              {cart.length > 0 && (
+                <button
+                  type="button"
+                  onClick={clearCart}
+                  className="text-gray-400 hover:text-red-500 p-1.5 rounded-xl hover:bg-red-50 transition-colors"
+                  title="Kosongkan Keranjang"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
             </div>
 
-            {/* Cart Items List */}
-            <div className={`space-y-2.5 overflow-y-auto pr-1 flex-1 ${isMobileCartOpen ? "min-h-[40vh]" : "max-h-[300px] sm:max-h-[360px]"}`}>
+            {/* Cart Items List Desktop */}
+            <div className="space-y-2.5 max-h-[360px] overflow-y-auto pr-1">
               {cart.map((item, idx) => {
                 const addonsPrice = (item.selectedAddons || []).reduce((s, a) => s + a.price, 0);
                 const subtotal = (Number(item.price) + addonsPrice) * item.qty;
@@ -1104,17 +1045,10 @@ export default function POSPage() {
                       </p>
                     </div>
 
-                    {/* Qty Controls */}
                     <div className="flex items-center gap-2 bg-white px-2 py-1 rounded-xl border border-pink-200">
                       <button
                         type="button"
-                        onClick={() => {
-                          updateCartQty(idx, -1);
-                          // Tutup otomatis kalau isi keranjang jadi 0 dari dalam pop-up
-                          if (isMobileCartOpen && cart.length === 1 && cart[0].qty === 1) {
-                            setIsMobileCartOpen(false);
-                          }
-                        }}
+                        onClick={() => updateCartQty(idx, -1)}
                         className="w-6 h-6 rounded-lg bg-pink-50 hover:bg-pink-100 text-rose-600 flex items-center justify-center font-bold text-xs transition-colors"
                       >
                         <Minus className="w-3 h-3 stroke-[3]" />
@@ -1147,9 +1081,9 @@ export default function POSPage() {
               )}
             </div>
 
-            {/* Total & Checkout Button */}
+            {/* Total & Checkout Button Desktop */}
             {cart.length > 0 && (
-              <div className="mt-4 pt-4 border-t border-pink-100 shrink-0">
+              <div className="mt-4 pt-4 border-t border-pink-100">
                 <div className="flex justify-between items-center mb-3">
                   <span className="text-xs font-bold text-gray-600">Total Tagihan:</span>
                   <span className="text-lg font-black text-rose-600">
@@ -1160,9 +1094,8 @@ export default function POSPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    setIsMobileCartOpen(false); // Tutup pop-up keranjang
                     setCashReceived(cartTotal);
-                    setIsCheckoutOpen(true);    // Buka pop-up bayar
+                    setIsCheckoutOpen(true);
                   }}
                   className="w-full py-4 bg-gradient-to-r from-rose-500 to-pink-500 text-white font-black text-sm rounded-2xl shadow-lg shadow-rose-200 hover:opacity-95 active:scale-95 transition-all flex items-center justify-center gap-2 btn-bounce min-h-[52px]"
                 >
@@ -1175,9 +1108,117 @@ export default function POSPage() {
         </div>
       </div>
 
+      {/* MODAL KERANJANG KASIR (VERSI MOBILE POP-UP) */}
+      {/* Akan menutupi layar sepenuhnya saat tombol merah diklik, 0% Scroll! */}
+      {isMobileCartOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-gray-900/60 backdrop-blur-sm lg:hidden animate-fade-in">
+          <div className="bg-white w-full rounded-t-3xl shadow-2xl flex flex-col max-h-[85vh] animate-slide-up pb-safe">
+            
+            {/* Header Pop-up Keranjang */}
+            <div className="p-4 border-b border-pink-100 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-rose-50 text-rose-500 flex items-center justify-center">
+                  <ShoppingBag className="w-4 h-4 stroke-[2.5]" />
+                </div>
+                <div>
+                  <h2 className="font-extrabold text-sm text-gray-800">Keranjang Pesanan</h2>
+                  <p className="text-[10px] text-gray-500">{cartItemCount} item dipilih</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => {
+                    clearCart();
+                    setIsMobileCartOpen(false);
+                  }}
+                  className="p-2 text-gray-400 hover:text-red-500 rounded-full transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setIsMobileCartOpen(false)}
+                  className="p-2 text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-full transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* List Isi Keranjang */}
+            <div className="overflow-y-auto flex-1 p-4 space-y-3">
+              {cart.map((item, idx) => {
+                const addonsPrice = (item.selectedAddons || []).reduce((s, a) => s + a.price, 0);
+                const subtotal = (Number(item.price) + addonsPrice) * item.qty;
+
+                return (
+                  <div key={idx} className="flex items-center justify-between gap-3 p-3 bg-pink-50/30 border border-pink-100 rounded-2xl">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-xs text-gray-800 truncate">{item.name}</p>
+                      {item.selectedAddons && item.selectedAddons.length > 0 && (
+                        <p className="text-[10px] text-rose-600 truncate">
+                          + {item.selectedAddons.map((a) => a.name).join(", ")}
+                        </p>
+                      )}
+                      <p className="text-[11px] font-extrabold text-gray-700 mt-0.5">
+                        {formatRupiah(subtotal)}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 bg-white px-2 py-1 rounded-xl border border-pink-200 shrink-0">
+                      <button
+                        onClick={() => {
+                          updateCartQty(idx, -1);
+                          // Otomatis tutup keranjang kalau isinya habis
+                          if (cart.length === 1 && cart[0].qty === 1) {
+                            setIsMobileCartOpen(false);
+                          }
+                        }}
+                        className="w-6 h-6 rounded-lg bg-pink-50 hover:bg-pink-100 text-rose-600 flex items-center justify-center font-bold"
+                      >
+                        <Minus className="w-3 h-3 stroke-[3]" />
+                      </button>
+                      <span className="w-5 text-center text-xs font-black text-gray-800">{item.qty}</span>
+                      <button
+                        onClick={() => updateCartQty(idx, 1)}
+                        className="w-6 h-6 rounded-lg bg-rose-500 hover:bg-rose-600 text-white flex items-center justify-center font-bold"
+                      >
+                        <Plus className="w-3 h-3 stroke-[3]" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Footer Total & Bayar */}
+            <div className="p-4 border-t border-pink-100 bg-white shrink-0">
+              <div className="flex justify-between items-center mb-3">
+                <span className="text-xs font-bold text-gray-600">Total Tagihan:</span>
+                <span className="text-lg font-black text-rose-600">
+                  {formatRupiah(cartTotal)}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMobileCartOpen(false);
+                  setCashReceived(cartTotal);
+                  setIsCheckoutOpen(true);
+                }}
+                className="w-full py-4 bg-gradient-to-r from-rose-500 to-pink-500 text-white font-black text-sm rounded-2xl shadow-lg shadow-rose-200 active:scale-95 transition-transform flex items-center justify-center gap-2"
+              >
+                <span>Bayar Sekarang ({cartItemCount})</span>
+                <ArrowRight className="w-4 h-4 stroke-[3]" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL CHECKOUT & KALKULATOR KEMBALIAN INSTAN */}
       {isCheckoutOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-pop-in">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-pop-in">
           <div className="bg-white rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-pink-100 text-left relative max-h-[92vh] flex flex-col">
             <div className="flex items-center justify-between pb-3 border-b border-pink-100">
               <div>
@@ -1377,7 +1418,7 @@ export default function POSPage() {
       {/* MODAL ZOOM QRIS LAYAR BESAR (UNTUK SCAN HP PELANGGAN) */}
       {isQrisZoomOpen && (
         <div 
-          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-gray-950/80 backdrop-blur-md animate-pop-in"
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-gray-950/80 backdrop-blur-md animate-pop-in"
           onClick={() => setIsQrisZoomOpen(false)}
         >
           <div 
