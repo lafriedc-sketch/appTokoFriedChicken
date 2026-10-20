@@ -817,9 +817,11 @@ export default function POSPage() {
       {/* Floating Mobile Cart Bar (Khusus Layar HP) */}
       {cart.length > 0 && (
         <div className="fixed bottom-[72px] left-4 right-4 z-40 lg:hidden animate-pop-in">
+          {/* FUNGSI ONCLICK DIUBAH: LANGSUNG BUKA POP-UP CHECKOUT */}
           <button
             onClick={() => {
-              document.getElementById('cart-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              setCashReceived(cartTotal);
+              setIsCheckoutOpen(true);
             }}
             className="w-full bg-rose-600 text-white shadow-xl shadow-rose-300 rounded-2xl p-3.5 flex items-center justify-between active:scale-95 transition-transform border border-rose-400"
           >
@@ -831,12 +833,12 @@ export default function POSPage() {
                 </span>
               </div>
               <div className="text-left">
-                <p className="text-[10px] font-medium text-rose-100 leading-none mb-0.5">Cek Keranjang & Bayar</p>
+                <p className="text-[10px] font-medium text-rose-100 leading-none mb-0.5">Total Tagihan</p>
                 <p className="text-sm font-black leading-tight">{formatRupiah(cartTotal)}</p>
               </div>
             </div>
             <div className="flex items-center gap-1 font-bold text-xs bg-white/20 px-3 py-1.5 rounded-xl">
-              <span>Ke Kasir</span>
+              <span>Bayar Langsung</span>
               <ArrowRight className="w-4 h-4" />
             </div>
           </button>
