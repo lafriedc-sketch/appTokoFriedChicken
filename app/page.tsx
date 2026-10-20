@@ -128,10 +128,6 @@ export default function POSPage() {
   const [isDrawerOpenModal, setIsDrawerOpenModal] = useState(false);
   const [hasCheckedDrawer, setHasCheckedDrawer] = useState(false);
 
-  // Addon selection modal when clicking a product
-  const [selectedProductForAddon, setSelectedProductForAddon] = useState<Product | null>(null);
-  const [tempSelectedAddons, setTempSelectedAddons] = useState<ProductAddon[]>([]);
-
   // Checkout modal & payment
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [isQrisZoomOpen, setIsQrisZoomOpen] = useState(false);
@@ -291,20 +287,11 @@ export default function POSPage() {
     }, 0);
   }, [cart]);
 
-  // Handle Add Product Click
+  // Handle Add Product Click (VERSI CEPAT - TANPA POPUP)
   const handleProductClick = (product: Product) => {
     if (!product.is_available) return;
-
-    // If there are addons available and item is chicken, package, or promo, offer add-on dialog
-    if (
-      addons.length > 0 &&
-      (product.category === "Ayam" || product.category === "Paket" || product.category === "Promo")
-    ) {
-      setSelectedProductForAddon(product);
-      setTempSelectedAddons([]);
-    } else {
-      addToCartDirect(product, []);
-    }
+    // Langsung masuk keranjang tanpa memunculkan modal saus/addon
+    addToCartDirect(product, []);
   };
 
   const addToCartDirect = (product: Product, selectedAddonsList: ProductAddon[]) => {
@@ -338,14 +325,6 @@ export default function POSPage() {
     // Trigger cart badge bounce
     setCartBadgeAnimate(true);
     setTimeout(() => setCartBadgeAnimate(false), 300);
-  };
-
-  const handleConfirmAddon = () => {
-    if (selectedProductForAddon) {
-      addToCartDirect(selectedProductForAddon, tempSelectedAddons);
-      setSelectedProductForAddon(null);
-      setTempSelectedAddons([]);
-    }
   };
 
   const updateCartQty = (index: number, delta: number) => {
@@ -1125,86 +1104,6 @@ export default function POSPage() {
           </div>
         </div>
       </div>
-
-      {/* MODAL PILIH ADD-ON / SAUS */}
-      {selectedProductForAddon && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-pop-in">
-          <div className="bg-white rounded-3xl max-w-sm w-full p-5 shadow-2xl border border-pink-100 text-left">
-            <div className="flex items-center justify-between pb-3 border-b border-pink-100 mb-3">
-              <div>
-                <h3 className="font-black text-base text-gray-800">
-                  Tambah Saus / Pelengkap? 🌸
-                </h3>
-                <p className="text-xs text-rose-500 font-semibold mt-0.5">
-                  {selectedProductForAddon.name} - {formatRupiah(selectedProductForAddon.price)}
-                </p>
-              </div>
-            </div>
-
-            <p className="text-xs text-gray-500 mb-3">
-              Pilih saus lezat atau sambal pelengkap (opsional):
-            </p>
-
-            <div className="space-y-2 mb-5">
-              {addons.map((add) => {
-                const isSelected = tempSelectedAddons.some((a) => a.id === add.id);
-                return (
-                  <button
-                    key={add.id}
-                    type="button"
-                    onClick={() => {
-                      if (isSelected) {
-                        setTempSelectedAddons((prev) => prev.filter((a) => a.id !== add.id));
-                      } else {
-                        setTempSelectedAddons((prev) => [...prev, add]);
-                      }
-                    }}
-                    className={`w-full p-3 rounded-2xl border text-xs font-bold flex items-center justify-between transition-all btn-bounce ${
-                      isSelected
-                        ? "bg-rose-50 text-rose-700 border-rose-400 shadow-sm"
-                        : "bg-white text-gray-700 border-pink-200 hover:bg-pink-50/50"
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div
-                        className={`w-5 h-5 rounded-lg flex items-center justify-center text-xs ${
-                          isSelected ? "bg-rose-500 text-white" : "border border-gray-300"
-                        }`}
-                      >
-                        {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
-                      </div>
-                      <span>{add.name}</span>
-                    </div>
-                    <span className="font-extrabold text-rose-600">
-                      +{formatRupiah(add.price)}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  addToCartDirect(selectedProductForAddon, []);
-                  setSelectedProductForAddon(null);
-                }}
-                className="py-3 bg-pink-50 text-gray-700 font-bold text-xs rounded-2xl border border-pink-200 hover:bg-pink-100 min-h-[48px]"
-              >
-                Tanpa Saus
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmAddon}
-                className="py-3 bg-rose-500 text-white font-bold text-xs rounded-2xl shadow-md shadow-rose-200 hover:bg-rose-600 min-h-[48px]"
-              >
-                Simpan ke Keranjang
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* MODAL CHECKOUT & KALKULATOR KEMBALIAN INSTAN */}
       {isCheckoutOpen && (
