@@ -128,6 +128,10 @@ export default function POSPage() {
   const [isDrawerOpenModal, setIsDrawerOpenModal] = useState(false);
   const [hasCheckedDrawer, setHasCheckedDrawer] = useState(false);
 
+  // Addon selection modal when clicking a product
+  const [selectedProductForAddon, setSelectedProductForAddon] = useState<Product | null>(null);
+  const [tempSelectedAddons, setTempSelectedAddons] = useState<ProductAddon[]>([]);
+
   // Checkout modal & payment
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [isQrisZoomOpen, setIsQrisZoomOpen] = useState(false);
@@ -776,7 +780,7 @@ export default function POSPage() {
   };
 
   return (
-    <div className="pb-8">
+    <div className="pb-28 lg:pb-8"> {/* Memberi ruang kosong di bawah layar HP agar tombol melayang tidak tertutup */}
       {/* Cashier Login Modal */}
       <CashierLoginModal
         isOpen={isCashierModalOpen}
@@ -813,6 +817,35 @@ export default function POSPage() {
         cashierName={cashierSession?.name}
         onClose={() => setShowReceipt(false)}
       />
+
+      {/* Floating Mobile Cart Bar (Khusus Layar HP) */}
+      {cart.length > 0 && (
+        <div className="fixed bottom-[72px] left-4 right-4 z-40 lg:hidden animate-pop-in">
+          <button
+            onClick={() => {
+              document.getElementById('cart-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }}
+            className="w-full bg-rose-600 text-white shadow-xl shadow-rose-300 rounded-2xl p-3.5 flex items-center justify-between active:scale-95 transition-transform border border-rose-400"
+          >
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <ShoppingBag className="w-6 h-6" />
+                <span className="absolute -top-1.5 -right-1.5 bg-white text-rose-600 text-[11px] font-black w-5 h-5 flex items-center justify-center rounded-full shadow-sm">
+                  {cartItemCount}
+                </span>
+              </div>
+              <div className="text-left">
+                <p className="text-[10px] font-medium text-rose-100 leading-none mb-0.5">Cek Keranjang & Bayar</p>
+                <p className="text-sm font-black leading-tight">{formatRupiah(cartTotal)}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1 font-bold text-xs bg-white/20 px-3 py-1.5 rounded-xl">
+              <span>Ke Kasir</span>
+              <ArrowRight className="w-4 h-4" />
+            </div>
+          </button>
+        </div>
+      )}
 
       {/* Top Banner & Search */}
       <div className="bg-white rounded-3xl p-4 shadow-sm border border-pink-100 mb-4">
@@ -898,7 +931,7 @@ export default function POSPage() {
                   <span className="absolute top-2.5 right-2.5 text-[10px] font-bold bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">
                     Habis
                   </span>
-                ) : p.category === "Promo" && p.discount_percent && p.discount_percent > 0 ? (
+                ) : p.category === "Promo" && p.discount_percent && Number(p.discount_percent) > 0 ? (
                   <span className="absolute top-2.5 right-2.5 text-[10px] font-black bg-gradient-to-r from-red-500 to-rose-600 text-white px-2 py-0.5 rounded-full shadow-xs flex items-center gap-0.5 animate-pulse">
                     <span>🔥</span>
                     <span>-{p.discount_percent}%</span>
@@ -944,13 +977,13 @@ export default function POSPage() {
 
                 <div className="flex items-center justify-between pt-2 border-t border-pink-50 mt-1">
                   <div className="min-w-0">
-                    {p.original_price && p.original_price > p.price ? (
+                    {p.original_price && Number(p.original_price) > Number(p.price) ? (
                       <span className="text-[10px] line-through text-gray-400 font-bold block leading-none mb-0.5">
-                        {formatRupiah(p.original_price)}
+                        {formatRupiah(Number(p.original_price))}
                       </span>
                     ) : null}
                     <span className="font-black text-rose-600 text-sm leading-tight block">
-                      {formatRupiah(p.price)}
+                      {formatRupiah(Number(p.price))}
                     </span>
                   </div>
                   {p.is_available && (
@@ -983,7 +1016,7 @@ export default function POSPage() {
         </div>
 
         {/* Cart Panel (Desktop Sticky & Mobile Floating Bar / Trigger) */}
-        <div className="lg:col-span-4">
+        <div id="cart-panel" className="lg:col-span-4 scroll-mt-20">
           <div className="bg-white rounded-3xl p-4 sm:p-5 shadow-sm border border-pink-100 sticky top-20">
             {/* Header Keranjang */}
             <div className="flex items-center justify-between pb-3 border-b border-pink-100 mb-3">
@@ -1022,7 +1055,7 @@ export default function POSPage() {
             <div className="space-y-2.5 max-h-[300px] sm:max-h-[360px] overflow-y-auto pr-1">
               {cart.map((item, idx) => {
                 const addonsPrice = (item.selectedAddons || []).reduce((s, a) => s + a.price, 0);
-                const subtotal = (item.price + addonsPrice) * item.qty;
+                const subtotal = (Number(item.price) + addonsPrice) * item.qty;
 
                 return (
                   <div
@@ -1105,6 +1138,86 @@ export default function POSPage() {
         </div>
       </div>
 
+      {/* MODAL PILIH ADD-ON / SAUS */}
+      {selectedProductForAddon && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-pop-in">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-5 shadow-2xl border border-pink-100 text-left">
+            <div className="flex items-center justify-between pb-3 border-b border-pink-100 mb-3">
+              <div>
+                <h3 className="font-black text-base text-gray-800">
+                  Tambah Saus / Pelengkap? 🌸
+                </h3>
+                <p className="text-xs text-rose-500 font-semibold mt-0.5">
+                  {selectedProductForAddon.name} - {formatRupiah(Number(selectedProductForAddon.price))}
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-500 mb-3">
+              Pilih saus lezat atau sambal pelengkap (opsional):
+            </p>
+
+            <div className="space-y-2 mb-5">
+              {addons.map((add) => {
+                const isSelected = tempSelectedAddons.some((a) => a.id === add.id);
+                return (
+                  <button
+                    key={add.id}
+                    type="button"
+                    onClick={() => {
+                      if (isSelected) {
+                        setTempSelectedAddons((prev) => prev.filter((a) => a.id !== add.id));
+                      } else {
+                        setTempSelectedAddons((prev) => [...prev, add]);
+                      }
+                    }}
+                    className={`w-full p-3 rounded-2xl border text-xs font-bold flex items-center justify-between transition-all btn-bounce ${
+                      isSelected
+                        ? "bg-rose-50 text-rose-700 border-rose-400 shadow-sm"
+                        : "bg-white text-gray-700 border-pink-200 hover:bg-pink-50/50"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div
+                        className={`w-5 h-5 rounded-lg flex items-center justify-center text-xs ${
+                          isSelected ? "bg-rose-500 text-white" : "border border-gray-300"
+                        }`}
+                      >
+                        {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                      </div>
+                      <span>{add.name}</span>
+                    </div>
+                    <span className="font-extrabold text-rose-600">
+                      +{formatRupiah(Number(add.price))}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  addToCartDirect(selectedProductForAddon, []);
+                  setSelectedProductForAddon(null);
+                }}
+                className="py-3 bg-pink-50 text-gray-700 font-bold text-xs rounded-2xl border border-pink-200 hover:bg-pink-100 min-h-[48px]"
+              >
+                Tanpa Saus
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmAddon}
+                className="py-3 bg-rose-500 text-white font-bold text-xs rounded-2xl shadow-md shadow-rose-200 hover:bg-rose-600 min-h-[48px]"
+              >
+                Simpan ke Keranjang
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL CHECKOUT & KALKULATOR KEMBALIAN INSTAN */}
       {isCheckoutOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-pop-in">
@@ -1120,7 +1233,7 @@ export default function POSPage() {
                 onClick={() => setIsCheckoutOpen(false)}
                 className="p-1 rounded-full text-gray-400 hover:text-gray-700"
               >
-                ✕
+                <X className="w-5 h-5" />
               </button>
             </div>
 
