@@ -126,6 +126,8 @@ export interface StoreSettings {
   qris_mode: 'static' | 'dynamic';
   qris_static_image_url?: string | null;
   admin_pin: string;
+  rent_settings?: any; // SUDAH DITAMBAHKAN
+  cashier_users?: any; // SUDAH DITAMBAHKAN
   updated_at?: string;
 }
 
@@ -213,4 +215,3 @@ export interface AiAdvisorResult {
   generatedAt: string;
   isAiLive?: boolean;
 }
-
