@@ -63,18 +63,22 @@ export default function ReportsPage() {
   const [aiResult, setAiResult] = useState<AiAdvisorResult | null>(null);
   const [loadingAi, setLoadingAi] = useState(false);
 
-  // Load rent settings dari localStorage saat awal
+  // Load rent settings dari Supabase saat awal (Ganti localStorage)
   useEffect(() => {
     setIsMounted(true);
-    if (typeof window !== "undefined") {
+    const loadSettings = async () => {
       try {
-        const stored = localStorage.getItem("la_rent_settings");
-        if (stored) {
-          const parsed = JSON.parse(stored);
+        const { data } = await supabase.from("store_settings").select("rent_settings").limit(1).maybeSingle();
+        if (data && data.rent_settings) {
+          let parsed = data.rent_settings;
+          if (typeof parsed === 'string') parsed = JSON.parse(parsed);
           setRentSettings(parsed);
         }
-      } catch {}
-    }
+      } catch (e) {
+        console.error("Gagal load rent settings:", e);
+      }
+    };
+    loadSettings();
   }, []);
 
   const handleOpenSettingsModal = () => {
@@ -895,9 +899,7 @@ export default function ReportsPage() {
         </button>
       </div>
 
-      {/* ============================================================================== */}
       {/* ⚙️ MODAL PENGATURAN TARGET SEWA & TANGGAL JATUH TEMPO (READ ONLY / SINGLE SOT) */}
-      {/* ============================================================================== */}
       {isMounted &&
         isSettingsModalOpen &&
         createPortal(
