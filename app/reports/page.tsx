@@ -55,13 +55,9 @@ export default function ReportsPage() {
     monthly_electricity: 300000,
     rent_due_day: 25,
     accumulated_fund: 0,
+    fixed_expenses: [],
   });
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-
-  // Gunakan string pada state input agar mudah dihapus sampai kosong tanpa mental balik
-  const [editRent, setEditRent] = useState<string>("1500000");
-  const [editElectricity, setEditElectricity] = useState<string>("300000");
-  const [editDueDay, setEditDueDay] = useState<string>("25");
 
   // State AI Advisor
   const [aiResult, setAiResult] = useState<AiAdvisorResult | null>(null);
@@ -76,19 +72,12 @@ export default function ReportsPage() {
         if (stored) {
           const parsed = JSON.parse(stored);
           setRentSettings(parsed);
-          setEditRent(String(parsed.monthly_rent ?? 1500000));
-          setEditElectricity(String(parsed.monthly_electricity ?? 300000));
-          setEditDueDay(String(parsed.rent_due_day ?? 25));
         }
       } catch {}
     }
   }, []);
 
-  // Fungsi buka modal sekaligus sinkronkan isi form dengan data terakhir yang tersimpan
   const handleOpenSettingsModal = () => {
-    setEditRent(String(rentSettings.monthly_rent ?? 1500000));
-    setEditElectricity(String(rentSettings.monthly_electricity ?? 300000));
-    setEditDueDay(String(rentSettings.rent_due_day ?? 25));
     setIsSettingsModalOpen(true);
   };
 
@@ -117,7 +106,6 @@ export default function ReportsPage() {
           .order("created_at", { ascending: false });
 
         if (resWithCashier.error) {
-          // Fallback jika kolom cashier_name belum ada di database Supabase
           const resFallback = await supabase
             .from("transactions")
             .select(`
@@ -231,7 +219,7 @@ export default function ReportsPage() {
     fetchReportsData();
   }, []);
 
-  // Filter Data by Time (Termasuk Bulan Ini / Bulanan)
+  // Filter Data by Time
   const filteredData = useMemo(() => {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -277,18 +265,11 @@ export default function ReportsPage() {
       .reduce((acc, i) => acc + Number(i.cost_total || 0), 0);
   }, [filteredData]);
 
-  // Total biaya belanja masuk bahan baku (type: "in")
-  const totalPurchaseIn = useMemo(() => {
-    return filteredData.invs
-      .filter((i) => i.type === "in")
-      .reduce((acc, i) => acc + Number(i.cost_total || 0), 0);
-  }, [filteredData]);
-
   // KPI 3: Laba Kotor (Omzet - HPP Aktual FIFO)
   const netProfit = grossSales - totalHpp;
   const marginPercentage = grossSales > 0 ? ((netProfit / grossSales) * 100).toFixed(1) : "0";
 
-  // Hitung Hari Buka Riil Bulan Ini (Berdasarkan tanggal unik transaksi)
+  // Hitung Hari Buka Riil Bulan Ini
   const activeDaysThisMonth = useMemo(() => {
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -353,58 +334,11 @@ export default function ReportsPage() {
     }
   };
 
-  // Jalankan AI saat data atau filter berubah
   useEffect(() => {
     if (!loading) {
       runAiAdvisor(timeFilter, grossSales, totalHpp, filteredData.trans.length, netProfit, marginPercentage, rentSettings);
     }
   }, [timeFilter, grossSales, totalHpp, netProfit, marginPercentage, loading]);
-
-  // Simpan Target Sewa Baru (Anti-Mental & Sinkron dengan Pos Beban Rutin)
-  const handleSaveRentSettings = (e: React.FormEvent) => {
-    e.preventDefault();
-
-    const parsedRent = editRent.trim() === "" ? 0 : Number(editRent);
-    const parsedElec = editElectricity.trim() === "" ? 0 : Number(editElectricity);
-    const parsedDay = editDueDay.trim() === "" ? 25 : Number(editDueDay);
-    const validDueDay = Math.min(31, Math.max(1, parsedDay));
-
-    // Sinkronkan juga ke array fixed_expenses jika ada supaya target total & penjelasan AI ikut berubah
-    let updatedFixedExpenses = rentSettings.fixed_expenses;
-    if (Array.isArray(rentSettings.fixed_expenses) && rentSettings.fixed_expenses.length > 0) {
-      updatedFixedExpenses = rentSettings.fixed_expenses.map((exp) => {
-        const lower = exp.name.toLowerCase();
-        if (lower.includes("sewa")) {
-          return { ...exp, amount: parsedRent };
-        }
-        if (lower.includes("listrik") || lower.includes("token")) {
-          return { ...exp, amount: parsedElec };
-        }
-        return exp;
-      });
-    }
-
-    const updated: RentSettings = {
-      ...rentSettings,
-      monthly_rent: parsedRent,
-      monthly_electricity: parsedElec,
-      rent_due_day: validDueDay,
-      accumulated_fund: rentSettings.accumulated_fund || 0,
-      fixed_expenses: updatedFixedExpenses,
-    };
-
-    setRentSettings(updated);
-    setEditRent(String(parsedRent));
-    setEditElectricity(String(parsedElec));
-    setEditDueDay(String(validDueDay));
-
-    if (typeof window !== "undefined") {
-      localStorage.setItem("la_rent_settings", JSON.stringify(updated));
-    }
-
-    setIsSettingsModalOpen(false);
-    runAiAdvisor(timeFilter, grossSales, totalHpp, filteredData.trans.length, netProfit, marginPercentage, updated);
-  };
 
   // Chart Data: Tren 7 Hari Terakhir
   const chartData = useMemo(() => {
@@ -506,7 +440,7 @@ export default function ReportsPage() {
     document.body.removeChild(link);
   };
 
-  // Hitung sisa hari menuju tanggal jatuh tempo secara lokal (fallback akurat jika AI sedang loading)
+  // Hitung sisa hari menuju tanggal jatuh tempo secara lokal
   const localDaysRemaining = useMemo(() => {
     const now = new Date();
     const currentDay = now.getDate();
@@ -524,6 +458,8 @@ export default function ReportsPage() {
   const recSinkingPercent = aiResult?.recommendedSinkingFund?.percentage ?? 10;
   const safeMoneyAmount = aiResult?.safeMoneyToTake?.amount ?? Math.max(0, netProfit - recSinkingAmount);
   const safeMoneyPercent = aiResult?.safeMoneyToTake?.percentage ?? (grossSales > 0 ? ((safeMoneyAmount / grossSales) * 100).toFixed(0) : "0");
+  
+  // Ambil Total Target Beban Rutin dari Data Admin (SSOT)
   const targetTotalBeban = Array.isArray(rentSettings.fixed_expenses) && rentSettings.fixed_expenses.length > 0
     ? rentSettings.fixed_expenses.reduce((sum: number, item) => sum + (Number(item.amount) || 0), 0)
     : (Number(rentSettings.monthly_rent) || 0) + (Number(rentSettings.monthly_electricity) || 0);
@@ -544,7 +480,6 @@ export default function ReportsPage() {
           </p>
         </div>
 
-        {/* Quick Date Filters (Harian, Mingguan, Bulanan) */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
           {[
             { key: "today", label: "Hari Ini" },
@@ -568,15 +503,11 @@ export default function ReportsPage() {
         </div>
       </div>
 
-      {/* ============================================================================== */}
-      {/* 🤖 HERO SECTION: AI FINANCIAL ADVISOR & 3 KANTONG DISIPLIN                     */}
-      {/* ============================================================================== */}
+      {/* 🤖 HERO SECTION: AI FINANCIAL ADVISOR & 3 KANTONG DISIPLIN */}
       <div className="bg-white rounded-3xl p-6 shadow-sm border-2 border-pink-200/80 relative overflow-hidden">
-        {/* Background Ambient Glow */}
         <div className="absolute -top-16 -right-16 w-48 h-48 bg-rose-200/40 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute -bottom-16 -left-16 w-48 h-48 bg-pink-100/50 rounded-full blur-3xl pointer-events-none" />
 
-        {/* Top Header AI Bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-5 border-b border-pink-100 mb-5">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-rose-500 to-pink-500 text-white flex items-center justify-center text-xl shadow-md shadow-rose-200 animate-pulse">
@@ -626,9 +557,8 @@ export default function ReportsPage() {
           </div>
         </div>
 
-        {/* 💵 3 KANTONG DISIPLIN KEUANGAN + UANG AMAN GUA PAKE (4 CARDS) */}
+        {/* 💵 3 KANTONG DISIPLIN KEUANGAN + UANG AMAN */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 mb-6">
-          {/* Card 1: Omzet Penjualan */}
           <div className="bg-pink-50/40 rounded-2xl p-4 border border-pink-100 flex flex-col justify-between">
             <div>
               <div className="flex items-center justify-between mb-1.5">
@@ -645,7 +575,6 @@ export default function ReportsPage() {
             </div>
           </div>
 
-          {/* Card 2: Modal Putar Bahan Baku (HPP) */}
           <div className="bg-amber-50/40 rounded-2xl p-4 border border-amber-200/70 flex flex-col justify-between">
             <div>
               <div className="flex items-center justify-between mb-1.5">
@@ -661,7 +590,6 @@ export default function ReportsPage() {
             </div>
           </div>
 
-          {/* Card 3: Tabungan Beban Tetap & Rutin */}
           <div className="bg-purple-50/40 rounded-2xl p-4 border border-purple-200/70 flex flex-col justify-between">
             <div>
               <div className="flex items-center justify-between mb-1.5">
@@ -680,12 +608,11 @@ export default function ReportsPage() {
                 <span>Tabungan sewa, gas & listrik</span>
               </span>
               <span className="text-[10px] bg-purple-100 text-purple-900 px-1.5 py-0.5 rounded-full font-bold">
-                {rentSettings.fixed_expenses?.length || 2} Pos
+                {rentSettings.fixed_expenses?.length || 0} Pos
               </span>
             </div>
           </div>
 
-          {/* Card 4: UANG YANG AMAN GUA PAKE (HIGHLIGHT UTAMA EMERALD) */}
           <div className="bg-gradient-to-br from-emerald-500 via-teal-600 to-emerald-700 rounded-2xl p-4 text-white shadow-lg shadow-emerald-200 flex flex-col justify-between border border-emerald-400">
             <div>
               <div className="flex items-center justify-between mb-1.5">
@@ -705,7 +632,7 @@ export default function ReportsPage() {
           </div>
         </div>
 
-        {/* 📅 STATUS JATUH TEMPO SEWA TOKO & PROGRESS BAR BULAN INI */}
+        {/* 📅 STATUS JATUH TEMPO SEWA */}
         <div className="p-4 rounded-2xl bg-gradient-to-r from-pink-50/80 via-white to-pink-50/80 border border-pink-200/90 mb-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
             <div className="flex items-center gap-2">
@@ -722,7 +649,7 @@ export default function ReportsPage() {
               {Array.isArray(rentSettings.fixed_expenses) && rentSettings.fixed_expenses.length > 0 ? (
                 <span className="text-gray-500 font-normal"> ({rentSettings.fixed_expenses.length} pos beban rutin)</span>
               ) : (
-                <span className="text-gray-500 font-normal"> (Sewa + Listrik)</span>
+                <span className="text-gray-500 font-normal"> (Pos beban kosong)</span>
               )}
             </div>
           </div>
@@ -741,7 +668,7 @@ export default function ReportsPage() {
           </div>
         </div>
 
-        {/* 🤖 KOTAK INSIGHT NARATIF AI (BAHASA MANUSIA) */}
+        {/* 🤖 KOTAK INSIGHT NARATIF AI */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-black text-gray-800 uppercase tracking-wider flex items-center gap-1.5">
@@ -753,7 +680,6 @@ export default function ReportsPage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {/* Box 1: Kesehatan & Margin */}
             <div className="p-3.5 rounded-2xl bg-white border border-pink-100 shadow-xs space-y-1">
               <div className="flex items-center gap-1.5 text-xs font-bold text-gray-800">
                 <span>🩺</span>
@@ -764,7 +690,6 @@ export default function ReportsPage() {
               </p>
             </div>
 
-            {/* Box 2: Rekomendasi Sisihan Hari Ini */}
             <div className="p-3.5 rounded-2xl bg-white border border-pink-100 shadow-xs space-y-1">
               <div className="flex items-center gap-1.5 text-xs font-bold text-gray-800">
                 <span>🏷️</span>
@@ -775,7 +700,6 @@ export default function ReportsPage() {
               </p>
             </div>
 
-            {/* Box 3: Uang Aman Gua Pake */}
             <div className="p-3.5 rounded-2xl bg-emerald-50/40 border border-emerald-200/60 shadow-xs space-y-1">
               <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-900">
                 <span>🟢</span>
@@ -786,7 +710,6 @@ export default function ReportsPage() {
               </p>
             </div>
 
-            {/* Box 4: Saran Dapur & Jam Ramai */}
             <div className="p-3.5 rounded-2xl bg-white border border-pink-100 shadow-xs space-y-1">
               <div className="flex items-center gap-1.5 text-xs font-bold text-gray-800">
                 <span>🍗</span>
@@ -800,11 +723,8 @@ export default function ReportsPage() {
         </div>
       </div>
 
-      {/* ============================================================================== */}
-      {/* 📊 GRAFIK HARIAN & TREN PENJUALAN                                              */}
-      {/* ============================================================================== */}
+      {/* 📊 GRAFIK HARIAN & TREN */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* Grafik Batang: Omzet vs HPP FIFO */}
         <div className="bg-white rounded-3xl p-5 shadow-sm border border-pink-100">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -840,7 +760,6 @@ export default function ReportsPage() {
           </div>
         </div>
 
-        {/* Grafik Garis: Tren Laba Bersih */}
         <div className="bg-white rounded-3xl p-5 shadow-sm border border-pink-100">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -884,9 +803,8 @@ export default function ReportsPage() {
         </div>
       </div>
 
-      {/* REKAP KINERJA KASIR & TOP MENU */}
+      {/* REKAP KINERJA & TOP MENU */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-        {/* Rekap Kinerja Kasir */}
         <div className="lg:col-span-6 bg-white rounded-3xl p-5 shadow-sm border border-pink-100">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -900,10 +818,7 @@ export default function ReportsPage() {
 
           <div className="space-y-2.5">
             {cashierRanking.map((c) => (
-              <div
-                key={c.name}
-                className="p-3 bg-pink-50/40 rounded-2xl border border-pink-100 flex items-center justify-between text-xs"
-              >
+              <div key={c.name} className="p-3 bg-pink-50/40 rounded-2xl border border-pink-100 flex items-center justify-between text-xs">
                 <div className="flex items-center gap-3">
                   <span className="w-7 h-7 rounded-xl bg-white text-gray-700 font-bold text-xs flex items-center justify-center border border-pink-100 shadow-xs">
                     👤
@@ -913,22 +828,17 @@ export default function ReportsPage() {
                     <span className="text-[10px] text-gray-500">{c.count} nota diinput</span>
                   </div>
                 </div>
-
                 <span className="font-black text-rose-600">
                   {formatRupiah(c.total)}
                 </span>
               </div>
             ))}
-
             {cashierRanking.length === 0 && (
-              <p className="text-xs text-gray-400 text-center py-6">
-                Belum ada data inputan kasir di periode ini.
-              </p>
+              <p className="text-xs text-gray-400 text-center py-6">Belum ada data inputan kasir.</p>
             )}
           </div>
         </div>
 
-        {/* Top Menu Laris */}
         <div className="lg:col-span-6 bg-white rounded-3xl p-5 shadow-sm border border-pink-100">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -942,10 +852,7 @@ export default function ReportsPage() {
 
           <div className="space-y-2.5">
             {topProducts.map((p, idx) => (
-              <div
-                key={p.name}
-                className="p-3 bg-pink-50/40 rounded-2xl border border-pink-100 flex items-center justify-between text-xs"
-              >
+              <div key={p.name} className="p-3 bg-pink-50/40 rounded-2xl border border-pink-100 flex items-center justify-between text-xs">
                 <div className="flex items-center gap-3">
                   <span className="w-6 h-6 rounded-xl bg-rose-500 text-white font-black text-xs flex items-center justify-center">
                     {idx + 1}
@@ -955,28 +862,23 @@ export default function ReportsPage() {
                     <span className="text-[10px] text-gray-500">{p.qty} porsi terjual</span>
                   </div>
                 </div>
-
                 <span className="font-black text-rose-600">
                   {formatRupiah(p.revenue)}
                 </span>
               </div>
             ))}
-
             {topProducts.length === 0 && (
-              <p className="text-xs text-gray-400 text-center py-6">
-                Belum ada transaksi di periode ini.
-              </p>
+              <p className="text-xs text-gray-400 text-center py-6">Belum ada transaksi.</p>
             )}
           </div>
         </div>
       </div>
 
-      {/* Ekspor Laporan & Tombol Aksi */}
       <div className="bg-white rounded-3xl p-5 shadow-sm border border-pink-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h3 className="font-extrabold text-sm text-gray-800 mb-1 flex items-center gap-2">
             <Download className="w-4 h-4 text-rose-500" />
-            <span>Ekspor Data Transaksi Lengkap (Termasuk Kasir)</span>
+            <span>Ekspor Data Transaksi Lengkap</span>
           </h3>
           <p className="text-xs text-gray-500">
             Unduh rekap data transaksi format CSV (kompatibel Excel) mencakup nomor nota, nama kasir, jam, dan total penjualan.
@@ -986,7 +888,7 @@ export default function ReportsPage() {
         <button
           type="button"
           onClick={handleExportCSV}
-          className="py-3 px-6 bg-rose-500 text-white font-bold text-xs rounded-2xl shadow-md shadow-rose-200 hover:bg-rose-600 active:scale-95 transition-all flex items-center justify-center gap-2 btn-bounce min-h-[48px] whitespace-nowrap"
+          className="py-3 px-6 bg-rose-500 text-white font-bold text-xs rounded-2xl shadow-md shadow-rose-200 hover:bg-rose-600 active:scale-95 transition-all flex items-center justify-center gap-2 btn-bounce whitespace-nowrap"
         >
           <Download className="w-4 h-4" />
           <span>Export Laporan CSV</span>
@@ -994,25 +896,27 @@ export default function ReportsPage() {
       </div>
 
       {/* ============================================================================== */}
-      {/* ⚙️ MODAL PENGATURAN TARGET SEWA & TANGGAL JATUH TEMPO (PORTAL BODY)           */}
+      {/* ⚙️ MODAL PENGATURAN TARGET SEWA & TANGGAL JATUH TEMPO (READ ONLY / SINGLE SOT) */}
       {/* ============================================================================== */}
       {isMounted &&
         isSettingsModalOpen &&
         createPortal(
           <div
-            className="fixed inset-0 z-[1050] bg-gray-950/60 backdrop-blur-sm flex items-center justify-center p-4"
+            className="fixed inset-0 z-[1050] bg-gray-950/60 backdrop-blur-sm flex items-center justify-center p-4 animate-pop-in"
             onClick={() => setIsSettingsModalOpen(false)}
           >
             <div
-              className="bg-white rounded-3xl p-5 sm:p-6 w-full max-w-md shadow-2xl border border-pink-200 space-y-4 max-h-[90dvh] overflow-y-auto"
+              className="bg-white rounded-3xl p-5 sm:p-6 w-full max-w-sm shadow-2xl border border-pink-200 space-y-4 max-h-[90dvh] overflow-y-auto text-left"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between border-b border-pink-100 pb-3">
                 <div className="flex items-center gap-2">
                   <span className="text-xl">⚙️</span>
-                  <h3 className="font-extrabold text-base text-gray-800">
-                    Target Sewa & Jatuh Tempo
-                  </h3>
+                  <div>
+                    <h3 className="font-extrabold text-base text-gray-800">
+                      Target & Jatuh Tempo
+                    </h3>
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -1023,104 +927,59 @@ export default function ReportsPage() {
                 </button>
               </div>
 
-              <p className="text-xs text-gray-500">
-                Data ini dipakai oleh AI untuk menghitung rekomendasi persentase sisihan harian dan uang yang aman lu ambil.
+              <p className="text-[11px] text-gray-500 bg-pink-50/40 p-2.5 rounded-xl border border-pink-100">
+                Data beban rutin ini bersumber langsung dari <strong className="text-gray-700">Halaman Admin</strong> dan dipakai oleh AI untuk menghitung rekomendasi persentase Sinking Fund harian.
               </p>
 
-              {Array.isArray(rentSettings.fixed_expenses) && rentSettings.fixed_expenses.length > 0 && (
-                <div className="p-3 bg-pink-50/70 rounded-2xl border border-pink-100 space-y-2">
-                  <div className="flex items-center justify-between text-xs font-bold text-gray-800">
-                    <span>Daftar Pos Beban Rutin:</span>
+              <div className="space-y-3 pt-1">
+                <div className="bg-white p-3 rounded-2xl border border-pink-100 shadow-2xs flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-gray-800 block">Jatuh Tempo Pembayaran Sewa</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-semibold text-gray-500">Tgl</span>
+                    <span className="px-2 py-0.5 text-xs font-black text-center bg-pink-50 border border-pink-200 rounded-lg text-rose-600">
+                      {rentSettings.rent_due_day || 25}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-pink-100 shadow-2xs overflow-hidden">
+                  <div className="p-3 bg-pink-50/50 border-b border-pink-100 flex items-center justify-between text-[11px] font-bold text-gray-800">
+                    <span>Daftar Pos Beban Bulanan:</span>
                     <span className="text-rose-600 font-black">{formatRupiah(targetTotalBeban)} / bln</span>
                   </div>
-                  <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                    {rentSettings.fixed_expenses.map((exp) => (
-                      <div key={exp.id} className="flex items-center justify-between text-[11px] bg-white px-2.5 py-1.5 rounded-xl border border-pink-100">
-                        <span className="font-semibold text-gray-700">{exp.name}</span>
-                        <span className="font-bold text-gray-900">{formatRupiah(exp.amount)}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <a
-                    href="/admin"
-                    className="block text-center text-[10px] font-bold text-rose-600 hover:underline pt-1"
-                  >
-                    ⚙️ Tambah / Edit Pos Pengeluaran di Menu Admin &rarr;
-                  </a>
-                </div>
-              )}
-
-              <form onSubmit={handleSaveRentSettings} noValidate className="space-y-3.5">
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">
-                    Biaya Sewa Toko per Bulan (Rp)
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="Contoh: 600000"
-                    value={editRent}
-                    onChange={(e) => setEditRent(e.target.value.replace(/[^0-9]/g, ""))}
-                    className="w-full px-3.5 py-2.5 text-sm bg-pink-50/50 border border-pink-200 rounded-xl font-black text-gray-800 focus:outline-none focus:ring-2 focus:ring-rose-400"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">
-                    Estimasi Token Listrik per Bulan (Rp)
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="Contoh: 150000"
-                    value={editElectricity}
-                    onChange={(e) => setEditElectricity(e.target.value.replace(/[^0-9]/g, ""))}
-                    className="w-full px-3.5 py-2.5 text-sm bg-pink-50/50 border border-pink-200 rounded-xl font-black text-gray-800 focus:outline-none focus:ring-2 focus:ring-rose-400"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">
-                    Tanggal Jatuh Tempo Bayar Sewa (1 - 31)
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-gray-500 font-semibold">Tanggal:</span>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      placeholder="10"
-                      value={editDueDay}
-                      onChange={(e) => {
-                        const raw = e.target.value.replace(/[^0-9]/g, "");
-                        if (raw === "") {
-                          setEditDueDay("");
-                        } else {
-                          const num = Math.min(31, Number(raw));
-                          setEditDueDay(String(num));
-                        }
-                      }}
-                      className="w-24 px-3 py-2.5 text-sm font-black text-center bg-pink-50/50 border border-pink-200 rounded-xl text-rose-600 focus:outline-none focus:ring-2 focus:ring-rose-400"
-                    />
-                    <span className="text-xs text-gray-500">setiap bulannya</span>
+                  
+                  <div className="p-2 space-y-1.5 max-h-36 overflow-y-auto">
+                    {Array.isArray(rentSettings.fixed_expenses) && rentSettings.fixed_expenses.length > 0 ? (
+                      rentSettings.fixed_expenses.map((exp) => (
+                        <div key={exp.id} className="flex items-center justify-between text-[11px] px-2 py-1.5 rounded-lg hover:bg-pink-50/30">
+                          <span className="font-semibold text-gray-700">{exp.name}</span>
+                          <span className="font-black text-gray-900">{formatRupiah(exp.amount)}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-center text-[10px] text-gray-400 py-2 italic">Belum ada pos beban rutin yang diatur.</p>
+                    )}
                   </div>
                 </div>
+              </div>
 
-                <div className="pt-2 flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsSettingsModalOpen(false)}
-                    className="w-1/2 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold text-xs hover:bg-gray-50"
-                  >
-                    Batal
-                  </button>
-                  <button
-                    type="submit"
-                    className="w-1/2 py-3 rounded-xl bg-rose-500 text-white font-bold text-xs shadow-md shadow-rose-200 hover:bg-rose-600 active:scale-95 transition-transform"
-                  >
-                    Simpan & Terapkan
-                  </button>
-                </div>
-              </form>
+              <div className="pt-2 flex flex-col gap-2">
+                <a
+                  href="/admin"
+                  className="w-full py-3 rounded-xl bg-rose-500 text-white font-bold text-xs shadow-md shadow-rose-200 hover:bg-rose-600 flex items-center justify-center gap-1.5 btn-bounce"
+                >
+                  ⚙️ Ubah Data di Menu Admin &rarr;
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setIsSettingsModalOpen(false)}
+                  className="w-full py-2.5 rounded-xl border border-gray-200 text-gray-600 font-bold text-xs hover:bg-gray-50 text-center"
+                >
+                  Tutup
+                </button>
+              </div>
             </div>
           </div>,
           document.body
