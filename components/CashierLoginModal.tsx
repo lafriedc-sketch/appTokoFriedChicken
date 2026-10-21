@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { UserCheck, Sparkles, AlertCircle, ArrowRight, ShieldCheck } from "lucide-react";
 import { CashierSession, CashierUser } from "@/types";
 import { supabase } from "@/lib/supabaseClient";
@@ -16,12 +17,15 @@ export default function CashierLoginModal({
   onSuccess,
   validPin = "1234",
 }: CashierLoginModalProps) {
+  const [isMounted, setIsMounted] = useState(false);
   const [cashierName, setCashierName] = useState("Kasir 1");
   const [pin, setPin] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const [cashierList, setCashierList] = useState<CashierUser[]>([]);
 
   useEffect(() => {
+    setIsMounted(true);
+    
     const fetchCashiers = async () => {
       try {
         const { data, error } = await supabase
@@ -64,7 +68,8 @@ export default function CashierLoginModal({
     }
   }, [isOpen]);
 
-  if (!isOpen) return null;
+  // Pastikan komponen dirender di client-side (mounted) baru portal bisa jalan
+  if (!isOpen || !isMounted) return null;
 
   const handleLogin = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -108,8 +113,9 @@ export default function CashierLoginModal({
     onSuccess(session);
   };
 
-  return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
+  // Menggunakan createPortal untuk menembak modal langsung ke document.body
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-gray-950/70 backdrop-blur-sm">
       <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-pink-100 text-center relative overflow-y-auto max-h-[90dvh] animate-pop-in">
         {/* Decorative background glow */}
         <div className="absolute -top-12 -right-12 w-36 h-36 bg-pink-100 rounded-full blur-2xl pointer-events-none" />
@@ -128,7 +134,7 @@ export default function CashierLoginModal({
           Masuk untuk mulai melayani transaksi di kios LA Fried Chicken.
         </p>
 
-        <form onSubmit={handleLogin} className="space-y-4 text-left">
+        <form onSubmit={handleLogin} className="space-y-4 text-left relative z-10">
           {/* Preset Buttons */}
           <div>
             <label className="block text-xs font-bold text-gray-700 mb-1.5">
@@ -157,7 +163,7 @@ export default function CashierLoginModal({
               placeholder="Atau ketik nama kasir lain..."
               value={cashierName}
               onChange={(e) => setCashierName(e.target.value)}
-              className="w-full px-3.5 py-2.5 text-xs bg-pink-50/50 border border-pink-200 rounded-xl font-semibold focus:ring-2 focus:ring-rose-400"
+              className="w-full px-3.5 py-2.5 text-xs bg-white border border-pink-200 rounded-xl font-semibold focus:ring-2 focus:ring-rose-400"
               required
             />
           </div>
@@ -174,7 +180,7 @@ export default function CashierLoginModal({
               placeholder="Ketik password / PIN..."
               value={pin}
               onChange={(e) => setPin(e.target.value)}
-              className="w-full text-center text-lg font-bold tracking-wider py-2.5 bg-pink-50/50 border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400"
+              className="w-full text-center text-lg font-bold tracking-wider py-2.5 bg-white border border-pink-200 rounded-xl focus:ring-2 focus:ring-rose-400"
               required
             />
           </div>
@@ -195,6 +201,7 @@ export default function CashierLoginModal({
           </button>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
