@@ -116,8 +116,8 @@ export default function CashierLoginModal({
   // Menggunakan createPortal untuk menembak modal langsung ke document.body
   return createPortal(
     <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-gray-950/70 backdrop-blur-sm">
-        <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-pink-100 text-center relative overflow-x-hidden overflow-y-auto max-h-[90dvh] animate-pop-in">
-        {/* Decorative background glow */}
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-pink-100 text-center relative overflow-hidden animate-pop-in">
+{/* Decorative background glow */}
         <div className="absolute -top-12 -right-12 w-36 h-36 bg-pink-100 rounded-full blur-2xl pointer-events-none" />
         <div className="absolute -bottom-12 -left-12 w-36 h-36 bg-rose-100 rounded-full blur-2xl pointer-events-none" />
 
