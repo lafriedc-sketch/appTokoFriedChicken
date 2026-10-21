@@ -90,7 +90,7 @@ export default function CashierLoginModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-pop-in">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center min-h-[100dvh] p-4 bg-gray-900/60 backdrop-blur-sm animate-pop-in">
       <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-pink-100 text-center relative overflow-hidden">
         {/* Decorative background glow */}
         <div className="absolute -top-12 -right-12 w-36 h-36 bg-pink-100 rounded-full blur-2xl pointer-events-none" />
