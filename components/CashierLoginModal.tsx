@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { UserCheck, Sparkles, AlertCircle, ArrowRight, ShieldCheck } from "lucide-react";
 import { CashierSession, CashierUser } from "@/types";
+import { supabase } from "@/lib/supabaseClient";
 
 interface CashierLoginModalProps {
   isOpen: boolean;
@@ -21,27 +22,45 @@ export default function CashierLoginModal({
   const [cashierList, setCashierList] = useState<CashierUser[]>([]);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const stored = localStorage.getItem("la_cashier_users");
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored);
+    const fetchCashiers = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("store_settings")
+          .select("cashier_users")
+          .limit(1)
+          .maybeSingle();
+
+        if (!error && data && data.cashier_users) {
+          let parsed = data.cashier_users;
+          if (typeof parsed === "string") {
+            parsed = JSON.parse(parsed);
+          }
           if (Array.isArray(parsed) && parsed.length > 0) {
-            setCashierList(parsed.filter((u: CashierUser) => u.is_active));
-            setCashierName(parsed[0].name);
+            const activeCashiers = parsed.filter((u: CashierUser) => u.is_active);
+            setCashierList(activeCashiers);
+            if (activeCashiers.length > 0) {
+              setCashierName(activeCashiers[0].name);
+            }
             return;
           }
-        } catch {}
+        }
+        
+        // Fallback kalau belum ada data di Supabase
+        const defaultUsers: CashierUser[] = [
+          { id: "1", name: "Kasir 1", pin: "1234", role: "cashier", is_active: true },
+          { id: "2", name: "Kasir 2", pin: "1234", role: "cashier", is_active: true },
+          { id: "3", name: "Mbak Siti", pin: "1234", role: "cashier", is_active: true },
+          { id: "4", name: "Owner", pin: "1234", role: "admin", is_active: true },
+        ];
+        setCashierList(defaultUsers);
+        setCashierName("Kasir 1");
+      } catch (err) {
+        console.error("Gagal load kasir:", err);
       }
-      const defaultUsers: CashierUser[] = [
-        { id: "1", name: "Kasir 1", pin: "1234", role: "cashier", is_active: true },
-        { id: "2", name: "Kasir 2", pin: "1234", role: "cashier", is_active: true },
-        { id: "3", name: "Mbak Siti", pin: "1234", role: "cashier", is_active: true },
-        { id: "4", name: "Owner", pin: "1234", role: "admin", is_active: true },
-      ];
-      setCashierList(defaultUsers);
-      setCashierName("Kasir 1");
-      localStorage.setItem("la_cashier_users", JSON.stringify(defaultUsers));
+    };
+
+    if (isOpen) {
+      fetchCashiers();
     }
   }, [isOpen]);
 
@@ -90,8 +109,8 @@ export default function CashierLoginModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center min-h-[100dvh] p-4 bg-gray-900/60 backdrop-blur-sm animate-pop-in">
-      <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-pink-100 text-center relative overflow-hidden">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
+      <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-pink-100 text-center relative overflow-y-auto max-h-[90dvh] animate-pop-in">
         {/* Decorative background glow */}
         <div className="absolute -top-12 -right-12 w-36 h-36 bg-pink-100 rounded-full blur-2xl pointer-events-none" />
         <div className="absolute -bottom-12 -left-12 w-36 h-36 bg-rose-100 rounded-full blur-2xl pointer-events-none" />
