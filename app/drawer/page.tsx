@@ -48,9 +48,23 @@ export default function DrawerPage() {
   const [wasteUsus, setWasteUsus] = useState<number>(0);
   const [wasteNote, setWasteNote] = useState<string>("Sisa etalase closing");
 
+  // State Dinamis AI Sinking Fund
+  const [sinkingFundPct, setSinkingFundPct] = useState<number>(10);
+
   const fetchDrawerData = async () => {
     try {
       setLoading(true);
+
+      // Load AI Sinking Fund Percentage
+      if (typeof window !== "undefined") {
+        try {
+          const aiFund = localStorage.getItem("la_ai_sinking_fund");
+          if (aiFund) {
+            const parsed = JSON.parse(aiFund);
+            if (parsed.percentage) setSinkingFundPct(parsed.percentage);
+          }
+        } catch(e) {}
+      }
 
       // 0. Get store settings for Admin PIN
       const { data: settingsData } = await supabase
@@ -121,7 +135,6 @@ export default function DrawerPage() {
   }, []);
 
   // Perhitungan Target Uang Laci
-  // Target = Modal Kas Awal + Penjualan Tunai - Belanja Tunai dari Laci
   const expectedCash = useMemo(() => {
     if (!activeDrawer) return 0;
     return Number(activeDrawer.initial_cash) + cashSalesTotal - drawerExpenseTotal;
@@ -152,7 +165,6 @@ export default function DrawerPage() {
     try {
       setIsSubmitting(true);
       
-      // Update DB
       if (!activeDrawer.id.startsWith("local-")) {
         const { error } = await supabase
           .from("cash_drawers")
@@ -161,7 +173,6 @@ export default function DrawerPage() {
         if (error) throw error;
       }
       
-      // Update Local State
       const updatedDrawer = { ...activeDrawer, initial_cash: editCashAmount };
       setActiveDrawer(updatedDrawer);
       if (typeof window !== "undefined") {
@@ -183,7 +194,6 @@ export default function DrawerPage() {
     if (qtyToDeduct <= 0) return { success: true, qtyDeducted: 0, totalHpp: 0 };
 
     try {
-      // 1. Cari master item di gudang
       const { data: invItems } = await supabase
         .from("inventory_items")
         .select("id, name, current_stock");
@@ -211,7 +221,6 @@ export default function DrawerPage() {
       let totalHpp = 0;
       let totalDeductedFromBatches = 0;
 
-      // 2. Ambil batch aktif FIFO
       const { data: batches } = await supabase
         .from("inventory_batches")
         .select("*")
@@ -244,7 +253,6 @@ export default function DrawerPage() {
 
       const actualDeducted = totalDeductedFromBatches > 0 ? totalDeductedFromBatches : qtyToDeduct;
 
-      // 3. Catat transaksi pengurangan ke inventory_logs
       const logPayload = {
         item_id: rawItemId,
         change_qty: -actualDeducted,
@@ -259,7 +267,6 @@ export default function DrawerPage() {
         .select()
         .maybeSingle();
 
-      // Simpan ke local audit trail
       if (typeof window !== "undefined") {
         try {
           const localFifoLogs = JSON.parse(localStorage.getItem("la_fifo_logs") || "[]");
@@ -278,14 +285,12 @@ export default function DrawerPage() {
         } catch {}
       }
 
-      // 4. Update current_stock di inventory_items
       const updatedStock = Math.max(0, Number(matchedItem.current_stock || 0) - actualDeducted);
       await supabase
         .from("inventory_items")
         .update({ current_stock: updatedStock })
         .eq("id", rawItemId);
 
-      // 5. Catat ke frying_logs sebagai waste closing
       try {
         await supabase.from("frying_logs").insert({
           piece_count: -actualDeducted,
@@ -468,7 +473,6 @@ export default function DrawerPage() {
 
             {/* Breakdown List */}
             <div className="space-y-3">
-              {/* Row: Modal Kas Awal Kembalian (Dengan Fitur Edit) */}
               <div className="p-3 bg-pink-50/40 rounded-2xl border border-pink-100 flex justify-between items-center text-xs transition-all">
                 <div className="flex items-center gap-2 text-gray-700">
                   <Coins className="w-4 h-4 text-rose-500" />
@@ -539,12 +543,12 @@ export default function DrawerPage() {
                   <div className="flex items-center gap-2">
                     <span className="text-base">💡</span>
                     <div>
-                      <span className="font-extrabold text-purple-900 block">Alokasi Amplop Sewa (10% AI):</span>
+                      <span className="font-extrabold text-purple-900 block">Alokasi Amplop Sewa ({sinkingFundPct}% AI):</span>
                       <span className="text-[10px] text-purple-700">Sisihkan uang fisik ini ke amplop sewa & listrik</span>
                     </div>
                   </div>
                   <span className="font-black text-purple-700 bg-white border border-purple-200 px-2.5 py-1 rounded-xl text-xs shadow-xs">
-                    Rp {Math.round(cashSalesTotal * 0.1).toLocaleString("id-ID")}
+                    Rp {Math.round(cashSalesTotal * (sinkingFundPct / 100)).toLocaleString("id-ID")}
                   </span>
                 </div>
               )}
