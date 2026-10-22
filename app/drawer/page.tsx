@@ -17,7 +17,8 @@ import {
   Edit3,
   KeyRound,
   X,
-  Check
+  Check,
+  Trash2 // Tambahan ikon hapus
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { CashDrawer, Transaction, InventoryLog, StoreSettings } from "@/types";
@@ -353,23 +354,50 @@ export default function DrawerPage() {
       }
 
       localStorage.removeItem("la_active_drawer");
+      
+      // PERBAIKAN: Reset State UI Langsung ke 0 (Zero State) 
+      setActiveDrawer(null);
+      setCashSalesTotal(0);
+      setDrawerExpenseTotal(0);
+      setActualCashInput(0);
+      setHasWaste(false);
+      setWasteAyam(0);
+      setWasteUsus(0);
+
       const alertMsg = wasteSummary 
         ? `Sesi kasir berhasil ditutup dan laci terkunci! 🌸\nSisa etalase (${wasteSummary}) otomatis dipotong dari stok gudang.`
         : "Sesi kasir berhasil ditutup dan laci terkunci! 🌸";
       alert(alertMsg);
 
-      setActualCashInput(0);
-      setHasWaste(false);
-      setWasteAyam(0);
-      setWasteUsus(0);
       fetchDrawerData();
     } catch (err: any) {
       console.error("Error closing drawer:", err);
-      localStorage.removeItem("la_active_drawer");
-      alert("Sesi kasir berhasil ditutup dan laci terkunci! 🌸");
-      fetchDrawerData();
+      alert("Terjadi kesalahan saat menutup laci.");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // PERBAIKAN: Fungsi Hapus Riwayat Laci yang Double
+  const handleDeleteHistory = async (id: string) => {
+    if (!confirm("Hapus riwayat laci ini secara permanen? Data yang dihapus tidak bisa dikembalikan.")) return;
+
+    try {
+      if (!id.startsWith("local-")) {
+        const { error } = await supabase
+          .from("cash_drawers")
+          .delete()
+          .eq("id", id);
+        
+        if (error) throw error;
+      }
+      
+      // Update UI langsung hapus barisnya tanpa perlu refresh page
+      setClosedDrawers(prev => prev.filter(drawer => drawer.id !== id));
+      alert("Riwayat laci berhasil dihapus! 🗑️");
+    } catch (err: any) {
+      console.error("Error deleting drawer history:", err);
+      alert("Gagal menghapus riwayat laci.");
     }
   };
 
@@ -777,7 +805,7 @@ export default function DrawerPage() {
                   </p>
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   <span className="font-black text-gray-800">
                     Fisik: {formatRupiah(cd.actual_cash || 0)}
                   </span>
@@ -792,6 +820,15 @@ export default function DrawerPage() {
                   >
                     Selisih: {formatRupiah(cd.cash_difference || 0)}
                   </span>
+
+                  {/* PERBAIKAN: Tombol Hapus Riwayat */}
+                  <button
+                    onClick={() => handleDeleteHistory(cd.id)}
+                    className="p-1.5 ml-1 bg-red-50 text-red-500 rounded-lg border border-red-100 hover:bg-red-500 hover:text-white transition-all shadow-sm"
+                    title="Hapus Riwayat Ganda"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
             ))}
